@@ -10,9 +10,12 @@ on:
 jobs:
   build-and-scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
       # true seulement si le secret existe ET n'est pas vide
       HAS_NVD_KEY: ${{ secrets.NVD_API_KEY != '' }}
+      # Miroir quotidien de la NVD publie par le projet Dependency-Check
+      NVD_MIRROR: https://dependency-check.github.io/DependencyCheck_Builder/nvd_cache/nvdcve-{0}.json.gz
 
     steps:
       - name: Checkout code
@@ -28,34 +31,44 @@ jobs:
       - name: Build with Maven
         run: mvn -B clean verify
 
-      - name: Cache Dependency-Check data
-        uses: actions/cache@v4
+      - name: Restore Dependency-Check data
+        uses: actions/cache/restore@v4
         with:
           path: ~/.m2/repository/org/owasp/dependency-check-data
           key: depcheck-data-${{ github.run_id }}
           restore-keys: |
             depcheck-data-
 
-      # Avec cle NVD (rapide). La variable n'est definie que dans ce step.
+      # Miroir + cle NVD : telechargement rapide, l'API ne sert que pour le delta
       - name: Run OWASP Dependency-Check (with NVD key)
         if: env.HAS_NVD_KEY == 'true'
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
+          KEY=$(printf '%s' "$NVD_API_KEY" | tr -d '[:space:]')
           mvn -B org.owasp:dependency-check-maven:13.0.0:check \
-            -DnvdApiKey="$NVD_API_KEY" \
+            -DnvdApiKey="$KEY" \
+            -DnvdDatafeedUrl="$NVD_MIRROR" \
             -Dformats=HTML,JSON \
             -DfailBuildOnCVSS=11
 
-      # Sans cle NVD (lent). NVD_API_KEY n'existe pas du tout dans l'environnement.
+      # Miroir seul (sans cle)
       - name: Run OWASP Dependency-Check (no NVD key)
         if: env.HAS_NVD_KEY != 'true'
         run: |
-          echo "Pas de secret NVD_API_KEY : mise a jour lente (rate limit)."
           mvn -B org.owasp:dependency-check-maven:13.0.0:check \
+            -DnvdDatafeedUrl="$NVD_MIRROR" \
             -DnvdApiDelay=8000 \
             -Dformats=HTML,JSON \
             -DfailBuildOnCVSS=11
+
+      # Sauvegarde le cache meme si le step precedent echoue
+      - name: Save Dependency-Check data
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: depcheck-data-${{ github.run_id }}
 
       - name: Upload Dependency-Check report
         if: always()
