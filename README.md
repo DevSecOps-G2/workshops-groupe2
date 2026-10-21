@@ -57,7 +57,7 @@ Le dépôt `workshop3-G2` a été créé sur GitHub et alimenté avec le code du
 
 > Versions du `pom.xml` initial. `mysql-connector-j` a ensuite été mis à jour en 8.2.0 (voir section 9).
 
-![Dépôt GitHub](images/02-depot-github.png)
+<!-- ![Dépôt GitHub](images/02-depot-github.png) -->
 ![Code du projet](images/03-depot-code.png)
 
 ## 5. Pipeline CI : build Maven
