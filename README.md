@@ -25,6 +25,7 @@ Ces outils s'intègrent dans un pipeline CI/CD (GitHub Actions) pour appliquer l
 |         Terme          |                                  Définition                                  |
 |------------------------|------------------------------------------------------------------------------|
 | Dépendance             | Bibliothèque externe utilisée par le projet, déclarée dans `pom.xml`         |
+| Dépendance transitive  | Dépendance non déclarée directement, apportée par une autre dépendance       |
 | CVE                    | Identifiant public d'une faille de sécurité connue                           |
 | CVSS                   | Score de gravité d'une CVE, de 0 à 10                                        |
 | SCA                    | Software Composition Analysis : analyse des composants tiers                 |
@@ -50,9 +51,11 @@ Le dépôt `workshop3-G2` a été créé sur GitHub et alimenté avec le code du
 |------------------------------------------------------|-------------------------|
 | Jakarta EE (Servlet, JSP/JSTL, WebSocket, JSON, EL)  | API web et temps réel   |
 | `jakarta.persistence-api` / `hibernate-core`         | Accès aux données (ORM) |
-| `mysql-connector-j` 8.0.33                           | Connexion à MySQL       |
+| `mysql-connector-j` 8.0.33 (initialement)            | Connexion à MySQL       |
 | `gson` 2.12.1                                        | Sérialisation JSON      |
 | `junit-jupiter` 5.10.2                               | Tests                   |
+
+> Versions du `pom.xml` initial. `mysql-connector-j` a ensuite été mis à jour en 8.2.0 (voir section 9).
 
 ![Dépôt GitHub](images/02-depot-github.png)
 ![Code du projet](images/03-depot-code.png)
@@ -77,7 +80,12 @@ Le workflow `.github/workflows/ci.yml` se déclenche à chaque `push` et pull re
 Le fichier `.github/dependabot.yml` définit ce que Dependabot surveille.
 
 ```yaml
-[À COMPLÉTER : coller ici le contenu exact de votre dependabot.yml]
+version: 2
+updates:
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
 ```
 
 |      Paramètre      |                              Rôle                              |
@@ -85,7 +93,7 @@ Le fichier `.github/dependabot.yml` définit ce que Dependabot surveille.
 | `version: 2`        | Version du format de configuration                             |
 | `package-ecosystem` | Type de dépendances à surveiller (ici `maven`)                 |
 | `directory`         | Dossier où se trouve le fichier de dépendances (`/` = racine)  |
-| `schedule.interval` | Fréquence de vérification (`daily`, `weekly`...)               |
+| `schedule.interval` | Fréquence de vérification (ici `weekly`, une fois par semaine) |
 
 Cette configuration est à l'origine des 5 Pull Requests présentées en section 8.
 
@@ -99,7 +107,7 @@ Nous avons activé **Dependency graph** et **Dependabot alerts** dans *Settings 
 |----------------------------|-----------------------------------------|---------|-----------|
 | `mysql-connector-j` 8.0.33 | MySQL Connectors takeover vulnerability | High    | `pom.xml` |
 
-Cette alerte indique que la version utilisée du connecteur MySQL contient une faille connue. Il faut la corriger en passant à une version corrigée (voir section 9).
+Cette alerte correspond à la CVE-2023-22102 : la version utilisée du connecteur MySQL contient une faille connue, corrigée à partir de la version 8.2.0 (voir section 9).
 
 ![Alerte Dependabot](images/07-alertes-avant.png)
 
@@ -112,30 +120,30 @@ Dependabot a ouvert **5 PRs** de mise à jour. Chacune comporte une description 
 
 ### Analyse
 
-| PR |                 Mise à jour                  |    Type     | Conflit |   Décision    |
-|----|----------------------------------------------|-------------|---------|---------------|
-| #1 | `jakarta.persistence-api` 3.1.0 → 3.2.0      | Mineure     | Aucun   | Fusionnée     |
-| #2 | `jakarta.servlet.jsp.jstl-api` 3.0.0 → 3.0.2 | Correctif   | Aucun   | Fusionnée     |
-| #3 | `maven-compiler-plugin` 3.11.0 → 3.16.0      | Mineure     | Aucun   | Fusionnée     |
-| #4 | `jakarta.servlet.jsp-api` 3.1.0 → 4.0.0      | **Majeure** | Aucun   | Fusionnée     |
-| #5 | `jakarta.websocket-api` 2.1.0 → 2.2.0        | Mineure     | Aucun   | Fusionnée     |
+| PR |                 Mise à jour                  |    Type     | Conflit |  Décision |
+|----|----------------------------------------------|-------------|---------|-----------|
+| #1 | `jakarta.persistence-api` 3.1.0 → 3.2.0      | Mineure     | Aucun   | Fusionnée |
+| #2 | `jakarta.servlet.jsp.jstl-api` 3.0.0 → 3.0.2 | Correctif   | Aucun   | Fusionnée |
+| #3 | `maven-compiler-plugin` 3.11.0 → 3.16.0      | Mineure     | Aucun   | Fusionnée |
+| #4 | `jakarta.servlet.jsp-api` 3.1.0 → 4.0.0      | **Majeure** | Aucun   | Fusionnée |
+| #5 | `jakarta.websocket-api` 2.1.0 → 2.2.0        | Mineure     | Aucun   | Fusionnée |
 
 Règle appliquée : une PR est fusionnée si elle n'a pas de conflit avec `main`. Une mise à jour **majeure** (comme la PR #4, `jakarta.servlet.jsp-api` 3.1.0 → 4.0.0) peut casser la compatibilité (API changée, serveur d'application incompatible) : elle doit être testée après fusion.
 
 Les 5 PRs ouvertes par Dependabot ont été fusionnées une par une dans `main`. Après les fusions, l'onglet *Pull requests* affiche **0 PR ouverte et 5 fermées**.
 
-[À COMPLÉTER : résultat du build après les fusions (vert / en échec) et, si échec, la PR en cause]
+Après les fusions et la mise à jour de `mysql-connector-j`, le pipeline GitHub Actions s'exécute avec succès (job `build-and-scan` au vert). La montée de version majeure de `jakarta.servlet.jsp-api` n'a pas fait échouer le build.
 
 ![PR fusionnée](images/10-pr-fusionnee.png)
 ![Toutes les PRs fusionnées (Open 0, Closed 5)](images/10b-prs-fusionnees.png)
 
 ## 9. Résultat après fusion
 
-Les PRs ci-dessus sont des *version updates* : elles maintiennent les dépendances à jour mais ne ciblent pas spécifiquement la dépendance vulnérable. L'alerte sur `mysql-connector-j` reste donc ouverte tant que cette dépendance n'est pas mise à jour. Deux solutions :
+Les PRs ci-dessus sont des *version updates* : elles maintiennent les dépendances à jour mais ne ciblent pas spécifiquement la dépendance vulnérable. Après leur fusion, l'alerte sur `mysql-connector-j` restait donc ouverte. Deux solutions existent :
 - activer les **Dependabot security updates** (*Settings → Advanced Security*) : Dependabot ouvre alors une PR de correction pour l'alerte ;
-- ou modifier manuellement la version dans `pom.xml` vers une version corrigée indiquée dans l'alerte.
+- ou modifier manuellement la version dans `pom.xml` vers une version corrigée.
 
-Correction appliquée : [À COMPLÉTER : version de `mysql-connector-j` choisie, par exemple 8.x.x] ; état de l'alerte après correction : [À COMPLÉTER : fermée / toujours ouverte].
+Nous avons choisi la correction manuelle : `mysql-connector-j` 8.0.33 → **8.2.0** (version qui corrige la CVE-2023-22102), commit « Update mysql-connector-j to 8.2.0 (CVE-2023-22102) ». Après le push, le pipeline est passé au vert et l'alerte est **fermée** (onglet Dependabot : Open 0, Closed 1).
 
 ![Alertes après correction](images/11-alertes-apres.png)
 
@@ -163,17 +171,24 @@ L'analyse télécharge toute la base NVD (plus de 400 000 enregistrements). Sans
 | `Retrying request ...` (très nombreuses)   | API NVD surchargée : seulement 7 % de la base téléchargée après plus de 4 h             | Annulation du run, utilisation du miroir `nvdDatafeedUrl`           |
 | Avertissements Node 20 / `setup-java@v4`   | Actions obsolètes                                                                       | Passage à `actions/checkout@v5` et `actions/setup-java@v5`          |
 
-Après ces corrections, le job `build-and-scan` se termine avec succès en environ 1 min 40 s.
+Après ces corrections, le job `build-and-scan` se termine avec succès : environ 1 min 40 s lors du premier run (téléchargement de la base depuis le miroir), puis environ 40 s grâce au cache.
 
 ### 10.4 Résultats de l'analyse
 
-- Vulnérabilités trouvées : [À COMPLÉTER : nombre total, depuis le rapport HTML]
-- Répartition par gravité : Critical [X], High [X], Medium [X], Low [X]
+Rapport généré le 21 octobre 2026 (run #16, après la mise à jour de `mysql-connector-j`) :
 
-|         Dépendance         |      CVE      | CVSS  | Gravité |         Action           |
-|----------------------------|---------------|-------|---------|--------------------------|
-| `mysql-connector-j` 8.0.33 | [À COMPLÉTER] | [X.X] | High    | Mise à jour vers [X.Y.Z] |
-| [À COMPLÉTER]              | [À COMPLÉTER] | [X.X] | [ ]     | [ ]                      |
+- Dépendances analysées : 30
+- Dépendances vulnérables : 1
+- Vulnérabilités trouvées : 1
+- Répartition par gravité : Critical 0, High 1, Medium 0, Low 0
+
+|       Dépendance       |      CVE      |          CVSS           | Gravité |                    Action                     |
+|------------------------|---------------|-------------------------|---------|-----------------------------------------------|
+| `protobuf-java` 3.21.9 | CVE-2024-7254 | 7.5 (v3.1), 8.7 (v4.0)  | High    | Mise à jour vers 3.25.5 ou supérieur conseillée |
+
+`protobuf-java` est une **dépendance transitive** : elle n'est pas déclarée dans notre `pom.xml`, mais elle est apportée par `mysql-connector-j` 8.2.0. La CVE-2024-7254 permet un déni de service (dépassement de pile) lorsque l'application analyse des données Protocol Buffers non fiables. La correction consiste à surcharger la version de `protobuf-java` dans le `pom.xml` (3.25.5 ou supérieure).
+
+Le rapport confirme que la CVE-2023-22102 de `mysql-connector-j` a bien disparu après la mise à jour en 8.2.0.
 
 ![Run CI réussi](images/13-ci-run-vert.png)
 ![Artefact du rapport](images/14-artefact.png)
@@ -200,6 +215,7 @@ Les deux outils sont **complémentaires** : Dependabot corrige en proposant des 
 - Les mises à jour majeures (comme `jakarta.servlet.jsp-api` 4.0.0) demandent une vérification avant fusion.
 - OWASP Dependency-Check dépend fortement de la disponibilité de la base NVD : la clé API est indispensable, et un miroir de données ou un cache permet d'éviter des téléchargements très longs.
 - Lire attentivement les logs a permis de distinguer une erreur de configuration (clé absente, clé non activée) d'un problème externe (API NVD lente).
+- Dependency-Check a détecté une vulnérabilité dans une dépendance transitive (`protobuf-java`), que Dependabot n'avait pas signalée dans notre dépôt : les deux outils se complètent.
 
 ## 12. Références
 
