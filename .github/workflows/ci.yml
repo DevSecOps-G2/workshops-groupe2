@@ -23,4 +23,4 @@ jobs:
         run: mvn clean compile
 
       - name: Run OWASP Dependency-Check
-        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=11
+        run: mvn org.owasp:dependency-check-maven:check -DfailBuildOnCVSS=11 -nvdApiValidApiKey=false
