@@ -164,7 +164,15 @@
     const userId = ${sessionScope.user.id};
     const contactId = ${contact.id};
 
-    const socket = new WebSocket("ws://" + window.location.host + "${pageContext.request.contextPath}/ws/" + userId);
+    
+    const wsProtocol = window.location.protocol === "https:"
+        ? "wss:"
+        : "ws:";
+
+    const socket = new WebSocket(
+        wsProtocol + "//" + window.location.host +
+        "${pageContext.request.contextPath}/ws/" + userId
+    );
 
     socket.onmessage = function (event) {
 
