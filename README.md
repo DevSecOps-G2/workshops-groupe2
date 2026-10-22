@@ -62,6 +62,7 @@ docker run --rm \
 
 Lors de l'analyse, Semgrep a examiné les fichiers suivis par Git et a notamment signalé :
 
+<!-- nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket -->
 - Une utilisation de `ws://` dans `src/main/webapp/chat.jsp`, correspondant à une connexion WebSocket non chiffrée.
 - Une référence de version mutable `actions/checkout@v4` dans le workflow GitHub Actions.
 
