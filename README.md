@@ -36,9 +36,15 @@ Cette analyse permet notamment d'identifier :
 
 *Figure 1 : Tableau de bord général de SonarQube.*
 
-![Problèmes détectés par SonarQube](screenshots/sonarqube-Security-issues.png)(screenshots/sonarqube-Reliability-issues.png)(screenshots/sonarqube-Maintainability-issues.png)
+![Problèmes détectés par SonarQube](screenshots/sonarqube-Security-issues.png)
+*Figure 2 : Résultats et problèmes de sécurité détectés par SonarQube.*
 
-*Figure 2 : Résultats et problèmes détectés par SonarQube.*
+![Problèmes détectés par SonarQube](screenshots/sonarqube-Reliability-issues.png)
+*Figure 3 : Résultats et problèmes de fiabilité détectés par SonarQube.*
+
+![Problèmes détectés par SonarQube](screenshots/sonarqube-Maintainability-issues.png)
+*Figure 4 : Résultats et problèmes de maintenabilité détectés par SonarQube.*
+
 
 ## 4. Analyse de sécurité avec Semgrep
 
@@ -65,15 +71,15 @@ Ces résultats ont permis d'identifier des améliorations possibles concernant l
 
 ![Résultats de l'analyse 1 Semgrep](screenshots/semgrep-scan1.png)
 
-*Figure 3 : Résultats de l'analyse statique avec Semgrep avant correction.*
+*Figure 5 : Résultats de l'analyse statique avec Semgrep avant correction.*
 
 ![Résultats de l'analyse 2 Semgrep](screenshots/semgrep-scan2.png)
 
-*Figure 4 : Résultats de l'analyse statique avec Semgrep après correction.*
+*Figure 6 : Résultats de l'analyse statique avec Semgrep après correction.*
 
 ![Résultats de l'analyse 3 Semgrep](screenshots/semgrep-scan3.png)
 
-*Figure 5 : Résultats de l'analyse statique avec Semgrep après re-correction.*
+*Figure 7 : Résultats de l'analyse statique avec Semgrep après re-correction.*
 
 ## 5. Intégration dans un pipeline CI
 
@@ -94,7 +100,7 @@ Cette intégration permet de détecter automatiquement certains problèmes de s�
 
 ![Pipeline CI GitHub Actions](screenshots/github-actions-pipeline.png)
 
-*Figure 5 : Intégration et exécution du pipeline CI sur GitHub Actions.*
+*Figure 8 : Intégration et exécution du pipeline CI sur GitHub Actions.*
 
 ## 6. Corrections et vérifications
 
