@@ -394,4 +394,79 @@ Les deux outils sont **complémentaires** : Dependabot corrige en proposant des 
 
 **OWASP ZAP**
 
-*Section en cours de rédaction.*
+### 1. Objectif
+
+Utiliser OWASP ZAP pour détecter automatiquement les failles de sécurité de LiveChat en cours d'exécution, puis intégrer ce test dans un pipeline CI/CD.
+
+### 2. Rappel théorique
+
+- **DAST (Dynamic Application Security Testing)** : test « boîte noire » d'une application en cours d'exécution, sans accès au code source.
+- **Différence avec les workshops précédents** : le SAST (workshop 2) analyse le code, le SCA (workshop 3) analyse les dépendances, le DAST teste le comportement réel de l'application déployée.
+- **OWASP ZAP** : outil open source qui agit comme un proxy et un scanner de vulnérabilités web.
+- **Scan passif (baseline)** : analyse les réponses HTTP sans envoyer d'attaque.
+- **Scan actif (full scan)** : envoie des requêtes malveillantes (XSS, injections) pour tester l'application.
+
+### 3. Environnement
+
+- Docker : `<version>`
+- Image ZAP : `ghcr.io/zaproxy/zaproxy:stable`
+- LiveChat est construit avec le `Dockerfile` (Maven puis Tomcat) et lancé avec `docker compose up -d --build`. MySQL et l'application partagent le même réseau, ce qui permet de garder `persistence.xml` inchangé.
+- Application accessible sur `http://localhost:8080`
+
+![Services Docker](screenshots/ws4-01-docker-compose-ps.png)
+
+*Figure 1 : Conteneurs LiveChat et MySQL en cours d'exécution.*
+
+![LiveChat dans le navigateur](screenshots/ws4-02-livechat-browser.png)
+
+*Figure 2 : Page d'accueil de LiveChat.*
+
+### 4. Scan passif (baseline)
+
+Commande exécutée :
+
+```powershell
+docker run --rm -v "${PWD}/reports/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://host.docker.internal:8080 -r baseline-report.html -J baseline-report.json
+```
+
+Le code de sortie est `<1 ou 2>` : il signale la présence d'alertes, ce n'est pas une erreur d'exécution. Les rapports sont dans `reports/zap/`.
+
+![Résultat du scan baseline](screenshots/ws4-03-baseline-terminal.png)
+
+*Figure 3 : Résumé du scan passif dans le terminal.*
+
+![Synthèse du rapport baseline](screenshots/ws4-04-baseline-summary.png)
+
+*Figure 4 : Synthèse des alertes par niveau de risque.*
+
+| Niveau de risque | Nombre d'alertes |
+|---|---|
+| High | `<n>` |
+| Medium | `<n>` |
+| Low | `<n>` |
+| Informational | `<n>` |
+
+#### 4.1 Cookies
+
+![Alertes cookies](screenshots/ws4-05-baseline-cookies.png)
+
+*Figure 5 : Alertes liées aux cookies.*
+
+| Cookie | HttpOnly | Secure | SameSite | Risque |
+|---|---|---|---|---|
+| `<JSESSIONID ?>` | `<oui/non>` | `<oui/non>` | `<oui/non>` | `<...>` |
+
+`HttpOnly` empêche JavaScript de lire le cookie (protection contre le vol de session via XSS). `Secure` impose l'envoi en HTTPS uniquement. `SameSite` limite l'envoi du cookie dans les requêtes inter-sites (protection contre le CSRF).
+
+#### 4.2 En-têtes de sécurité manquants
+
+![En-têtes manquants](screenshots/ws4-06-baseline-headers.png)
+
+*Figure 6 : Alertes sur les en-têtes de sécurité.*
+
+| En-tête | Rôle | Risque si absent |
+|---|---|---|
+| Content-Security-Policy | Limite les sources de scripts autorisées | XSS |
+| X-Frame-Options | Interdit l'inclusion de la page dans une iframe | Clickjacking |
+| X-Content-Type-Options | Empêche le MIME sniffing | Exécution de contenu détourné |
+| Strict-Transport-Security | Force l'usage de HTTPS | Interception, downgrade |
