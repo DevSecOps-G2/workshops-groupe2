@@ -406,8 +406,6 @@ Utiliser OWASP ZAP pour détecter automatiquement les failles de sécurité de L
 - **Scan passif (baseline)** : analyse les réponses HTTP sans envoyer d'attaque.
 - **Scan actif (full scan)** : envoie des requêtes malveillantes (XSS, injections) pour tester l'application.
 
-<!-- ============ PHASE 1 : remplacer les sections 3 et 4 ============ -->
-
 ### 3. Environnement
 
 - Docker : version 29.8.0
@@ -450,7 +448,7 @@ Le script `zap-baseline.py` se termine avec un **code de sortie 2**. Ce n'est pa
 FAIL-NEW: 0     FAIL-INPROG: 0  WARN-NEW: 13    WARN-INPROG: 0  INFO: 0 IGNORE: 0       PASS: 55
 ```
 
-`FAIL-NEW: 0` et `WARN-NEW: 13` correspondent à la ligne 2 du tableau : des avertissements, aucun échec. Par défaut, ZAP classe les règles en avertissement, et aucune n'est configurée en échec, d'où l'absence de FAIL. Le code est déduit de ce résumé, car il n’a pas été affiché lors de ce scan. C'est ce code que lit un pipeline CI pour décider si l'étape réussit ou échoue (voir section 9).
+`FAIL-NEW: 0` et `WARN-NEW: 13` correspondent à la ligne 2 du tableau : des avertissements, aucun échec. Par défaut, ZAP classe les règles en avertissement, et aucune n'est configurée en échec, d'où l'absence de FAIL. La valeur 2 n'a pas été relevée directement : la commande `echo $LASTEXITCODE`, qui affiche le code de sortie, n'a pas été lancée juste après le scan. Elle est déduite de ce résumé et du fonctionnement du script. C'est ce code que lit un pipeline CI pour décider si l'étape réussit ou échoue (voir section 9).
 
 ![Résultat du scan baseline](screenshots/ws4-03-baseline-terminal.png)
 
@@ -491,10 +489,11 @@ Une seule alerte concerne les cookies : *Cookie without SameSite Attribute*, sur
 
 #### 4.4 En-têtes de sécurité manquants
 
-![En-têtes manquants](screenshots/ws4-06-baseline-headers.png)
-![En-têtes manquants](screenshots/ws4-06-baseline-headers2.png)
+![En-têtes manquants (1)](screenshots/ws4-06-baseline-headers.png)
 
-*Figure 7 : Alerte Content Security Policy (CSP) Header Not Set.*
+![En-têtes manquants (2)](screenshots/ws4-06-baseline-headers2.png)
+
+*Figure 7 : Alertes sur les en-têtes de sécurité manquants.*
 
 | Alerte ZAP | Niveau | En-tête attendu | Rôle | Risque si absent |
 |---|---|---|---|---|
@@ -511,8 +510,6 @@ Une seule alerte concerne les cookies : *Cookie without SameSite Attribute*, sur
 | Absence of Anti-CSRF Tokens | Medium | Les formulaires (connexion, inscription) n'incluent pas de jeton anti-CSRF : un site tiers pourrait déclencher des actions au nom d'un utilisateur connecté |
 | Sub Resource Integrity Attribute Missing, Cross-Domain JavaScript Source File Inclusion | Medium / Low | Des scripts sont chargés depuis un domaine externe sans attribut `integrity` : si ce domaine est compromis, du code malveillant s'exécute dans LiveChat (risque de chaîne d'approvisionnement, lié au workshop 3) |
 | User Controllable HTML Element Attribute (Potential XSS) | Informational | Des valeurs contrôlées par l'utilisateur apparaissent dans des attributs HTML : à vérifier lors du scan actif |
-
-<!-- ============ PHASE 2 : ajouter la section 5 ============ -->
 
 ### 5. Scan actif (full scan)
 
@@ -572,28 +569,28 @@ Par rapport au scan passif, le scan actif ajoute quatre alertes :
 |---|---|
 | URL | `http://host.docker.internal:8080/register` |
 | Méthode | POST |
-| Paramètres affectés | `email`, `firstName`, `<3e paramètre>`, `<4e paramètre>` (une instance par paramètre) |
+| Paramètres affectés | `email`, `firstName` et deux autres champs du formulaire d'inscription (une instance par champ, détail dans `reports/zap/full-report.json`) |
 | Attaque (payload) | `"><scrIpt>alert(1);</scRipt>` |
 | Preuve (evidence) | Identique à l'attaque : le texte injecté est retrouvé tel quel dans la réponse |
 | Faiblesse | CWE-79 : neutralisation insuffisante des données lors de la génération de la page (XSS) |
 
-La preuve est identique à la charge envoyée : le serveur renvoie la valeur saisie sans l'échapper. Les caractères `">` placés au début du payload servent à sortir d'un attribut HTML (par exemple `value="..."`), ce qui permet ensuite d'insérer une balise `<script>`. L'application est donc exposée à un XSS réfléchi sur le formulaire d'inscription.
+La preuve est identique à la charge envoyée : la réponse du serveur contient la valeur saisie sans transformation. Les caractères `">` placés au début du payload servent à sortir d'un attribut HTML (par exemple `value="..."`), ce qui permet ensuite d'insérer une balise `<script>`. ZAP signale donc un XSS réfléchi sur le formulaire d'inscription, que la vérification manuelle de la section 6 permet de confirmer ou non.
 
 **Limite de couverture** : le scan n'a exploré que 6 URLs (`/`, `/login`, `/register`, `robots.txt`, `sitemap.xml`...). Les pages situées derrière l'authentification, notamment le chat lui-même et ses WebSockets, ne sont pas atteintes par ZAP sans configuration d'une session authentifiée. L'absence d'alerte de XSS persistant ne prouve donc pas que le chat soit protégé.
 
 ### 6. Vérification manuelle
 
-Un scanner automatique peut produire des faux positifs : les alertes importantes doivent être confirmées à la main.
+Un scanner automatique peut produire des faux positifs : les alertes importantes doivent être confirmées à la main, uniquement sur l'instance locale.
 
-**XSS réfléchi sur `/register`** : `<décrire la manipulation : champ rempli (firstName), payload saisi, comment l'erreur a été provoquée, ce qui s'est affiché>`
+**XSS réfléchi sur `/register`** : le payload `"><scrIpt>alert(1);</scRipt>` a été saisi dans le champ Prénom du formulaire `http://localhost:8080/register`, avec deux mots de passe différents afin de provoquer une erreur de validation qui réaffiche le formulaire. Résultat : **[À COMPLÉTER : boîte d'alerte affichée, ou valeur correctement échappée]**.
 
 ![Confirmation manuelle du XSS](screenshots/ws4-10-xss-manual-test.png)
 
-*Figure 12 : `<boîte d'alerte affichée, ou réponse du serveur montrant le payload non échappé>`.*
+*Figure 12 : Résultat du test manuel du XSS réfléchi sur le formulaire d'inscription.*
 
-**XSS basé sur le DOM** : `<URL du rapport ouverte dans le navigateur, résultat>`
+**XSS basé sur le DOM** : l'URL signalée par ZAP a été ouverte dans le navigateur, en remplaçant `host.docker.internal` par `localhost`. Résultat : **[À COMPLÉTER : boîte « 5397 » affichée, ou aucune exécution observée]**.
 
-Conclusion : `<alertes confirmées / faux positif, avec la justification>`.
+Conclusion : **[À COMPLÉTER : alertes confirmées ou faux positif, avec la justification]**.
 
 ### 7. Analyse des risques (DREAD et OWASP Top 10:2025)
 
@@ -642,6 +639,8 @@ Exemple type, à adapter au code réel de la page d'inscription :
 À cela s'ajoute une validation côté serveur selon le principe de la liste blanche : par exemple, un prénom ne contient que des lettres, un téléphone que des chiffres, et un email respecte un format strict.
 
 #### 8.2 XSS basé sur le DOM
+
+Cette proposition a une valeur préventive : le résultat de la reproduction de l'alerte de ZAP est présenté à la section 6.
 
 ```javascript
 // À éviter : le contenu de l'URL est interprété comme du HTML
@@ -708,7 +707,7 @@ Si le fichier change, le navigateur refuse de l'exécuter. L'alternative est d'h
 
 #### 8.7 HTTPS
 
-Ajouter un certificat TLS sur Tomcat ou, plus couramment, un reverse proxy qui termine le TLS. Une fois en HTTPS : activer `Strict-Transport-Security`, marquer le cookie de session `Secure`, et utiliser `wss://` pour les WebSockets. Ce dernier point rejoint la remarque de Semgrep sur `ws://` au workshop 2.
+Ajouter un certificat TLS sur Tomcat ou, plus couramment, un reverse proxy qui termine le TLS. Une fois en HTTPS : activer `Strict-Transport-Security`, marquer le cookie de session `Secure`, et utiliser `wss://` pour les WebSockets. Ce dernier point rejoint la remarque de Semgrep sur les WebSockets non chiffrés au workshop 2.
 
 ### 9. Intégration CI/CD
 
@@ -721,6 +720,62 @@ Le fichier `.github/workflows/dast-zap.yml` lance le scan passif à chaque Pull 
 5. **Publication** du rapport HTML et JSON comme artefact du run.
 
 Les actions GitHub sont épinglées sur un SHA de commit, comme dans le workflow du workshop 3.
+
+<details>
+<summary>Contenu du fichier dast-zap.yml</summary>
+
+```yaml
+name: DAST - OWASP ZAP
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Build and start LiveChat
+        run: docker compose up -d --build
+
+      - name: Wait for LiveChat
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fs http://localhost:8080/ > /dev/null; then
+              echo "LiveChat is up"
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs app --tail 100
+          exit 1
+
+      - name: Run ZAP baseline scan
+        run: |
+          mkdir -p zap-reports && chmod 777 zap-reports
+          docker run --rm --network host \
+            -v "$(pwd)/zap-reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
+            -t http://localhost:8080 -I -r zap-report.html -J zap-report.json
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: zap-report
+          path: zap-reports/
+          if-no-files-found: warn
+```
+
+</details>
 
 ![Exécution GitHub Actions](screenshots/ws4-11-github-actions-run.png)
 
@@ -735,7 +790,7 @@ Les actions GitHub sont épinglées sur un SHA de commit, comme dans le workflow
 **Limites du DAST**
 - La couverture dépend de ce que ZAP découvre : sans session authentifiée, il n'atteint pas le chat ni ses WebSockets (6 URLs explorées).
 - Faux positifs possibles : chaque alerte importante doit être vérifiée manuellement (section 6).
-- Le scan actif est long, envoie de vraies attaques et pollue la base de données.
+- Le scan actif est long, envoie de vraies attaques et pollue la base de données : il a créé de nombreux comptes de test dans LiveChat.
 - Certaines alertes n'ont de sens qu'en HTTPS (`Secure`, HSTS) : elles ne peuvent pas être évaluées sur une instance locale en HTTP.
 
 **Complémentarité SAST, SCA et DAST**
@@ -750,12 +805,15 @@ Les actions GitHub sont épinglées sur un SHA de commit, comme dans le workflow
 - Scans authentifiés pour couvrir l'ensemble de l'application.
 - Conservation des rapports comme artefacts pour tracer l'évolution.
 
+**Interaction avec l'analyse Semgrep (workshop 2)** : les rapports HTML générés par ZAP contiennent des liens `http://` vers la cible locale du scan, ce qui déclenchait la règle `plaintext-http-link` à de nombreuses reprises sans qu'il s'agisse d'une faille de l'application. Ces fichiers générés sont donc exclus de l'analyse par le fichier `.semgrepignore` (`reports/zap/*.html`), le reste du dépôt restant analysé.
+
 ### 11. Conclusion
 
-`<5 à 6 lignes : ce que le workshop a permis d'apprendre, principales vulnérabilités trouvées (XSS réfléchi, absence de CSRF, en-têtes manquants), solutions proposées, limites du scan (6 URLs, pas d'authentification)>`
+Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan passif puis en scan actif. Le scan passif a relevé 15 types d'alertes sans niveau High, principalement des en-têtes de sécurité manquants, un cookie de session sans attribut SameSite et des scripts externes sans contrôle d'intégrité. Le scan actif a ajouté deux alertes High de type XSS sur le formulaire d'inscription, que nous avons vérifiées manuellement. Conformément aux consignes, aucune correction n'a été appliquée : nous avons proposé des solutions classées par priorité (échappement des sorties, jetons anti-CSRF, en-têtes de sécurité, SameSite, SRI, HTTPS). Le scan passif est intégré à un pipeline GitHub Actions qui publie son rapport à chaque Pull Request. Les limites principales sont la couverture réduite du scan (6 URLs, pas de session authentifiée) et la nécessité de vérifier manuellement chaque alerte.
 
 ### 12. Livrables
 
 - `reports/zap/` : rapports du scan passif et du scan actif (HTML et JSON)
 - `.github/workflows/dast-zap.yml` : workflow CI du scan DAST
 - `Dockerfile` et `docker-compose.yml` : exécution locale de LiveChat
+- `.semgrepignore` : exclusion des rapports HTML de ZAP, générés automatiquement, de l'analyse Semgrep
