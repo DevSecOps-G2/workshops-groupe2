@@ -518,6 +518,8 @@ Une seule alerte concerne les cookies : *Cookie without SameSite Attribute*, sur
 
 > Réalisé uniquement sur l'instance locale de test. Le scan actif envoie de vraies attaques et crée de nombreux comptes dans la base : il ne doit jamais être lancé sur une application dont nous ne sommes pas propriétaires.
 
+Le script `zap-full-scan.py` enchaîne l'exploration du site, l'analyse passive puis l'analyse active : son rapport contient donc à la fois les alertes passives du scan baseline (en-têtes, cookies) et les alertes actives (XSS, tests anti-CSRF). Le script `zap-baseline.py`, lui, se limite à l'analyse passive.
+
 Commande exécutée (`-m 5` limite l'exploration à 5 minutes) :
 
 ```powershell
@@ -538,16 +540,26 @@ Le scan actif a exécuté 143 règles : 130 sont passées sans alerte, 13 ont pr
 
 *Figure 9 : Synthèse du rapport du scan actif.*
 
+| Niveau de risque | Nombre d'alertes |
+|---|---|
+| High | 2 |
+| Medium | 5 |
+| Low | 8 |
+| Informational | 4 |
+
+Le terminal annonce 13 règles en avertissement pour 15 alertes de niveau Low à High, car une même règle (Cross-Origin, n° 90004) produit trois alertes distinctes. Les alertes informationnelles sont classées PASS dans le terminal.
+
 Par rapport au scan passif, le scan actif ajoute quatre alertes :
 
 | Alerte ZAP | Niveau | URL | Instances |
 |---|---|---|---|
-| Cross Site Scripting (Reflected) | `<niveau>` | `/register` | 4 |
-| Cross Site Scripting (DOM Based) | `<niveau>` | `/register` | 2 |
-| Anti-CSRF Tokens Check | `<niveau>` | `/register`, `/login` | 2 |
-| Cookie Slack Detector | `<niveau>` | `/`, `/login`, `/register` | 6 |
+| Cross Site Scripting (Reflected) | High | `/register` | 4 |
+| Cross Site Scripting (DOM Based) | High | `/register` | 2 |
+| Anti-CSRF Tokens Check | Medium | `/register`, `/login` | 2 |
+| Cookie Slack Detector | Low | `/`, `/login`, `/register` | Systemic |
 
 ![Détail de l'alerte XSS](screenshots/ws4-09-fullscan-xss-detail.png)
+![Détail de l'alerte XSS](screenshots/ws4-09-fullscan-xss-detail2.png)
 
 *Figure 10 : Détail de l'alerte Cross Site Scripting (Reflected) : URL, paramètre, attaque et preuve.*
 
