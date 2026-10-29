@@ -1,0 +1,2 @@
+# Rapports HTML generes par OWASP ZAP : liens http vers la cible locale (faux positifs)
+reports/zap/*.html
