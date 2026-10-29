@@ -406,9 +406,11 @@ Utiliser OWASP ZAP pour détecter automatiquement les failles de sécurité de L
 - **Scan passif (baseline)** : analyse les réponses HTTP sans envoyer d'attaque.
 - **Scan actif (full scan)** : envoie des requêtes malveillantes (XSS, injections) pour tester l'application.
 
+<!-- ============ PHASE 1 : remplacer les sections 3 et 4 ============ -->
+
 ### 3. Environnement
 
-- Docker : `<version>`
+- Docker : version 29.8.0
 - Image ZAP : `ghcr.io/zaproxy/zaproxy:stable`
 - LiveChat est construit avec le `Dockerfile` (Maven puis Tomcat) et lancé avec `docker compose up -d --build`. MySQL et l'application partagent le même réseau, ce qui permet de garder `persistence.xml` inchangé.
 - Application accessible sur `http://localhost:8080`
@@ -419,7 +421,7 @@ Utiliser OWASP ZAP pour détecter automatiquement les failles de sécurité de L
 
 ![LiveChat dans le navigateur](screenshots/ws4-02-livechat-browser.png)
 
-*Figure 2 : Page d'accueil de LiveChat.*
+*Figure 2 : Page de LiveChat après connexion.*
 
 ### 4. Scan passif (baseline)
 
@@ -429,44 +431,265 @@ Commande exécutée :
 docker run --rm -v "${PWD}/reports/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://host.docker.internal:8080 -r baseline-report.html -J baseline-report.json
 ```
 
-Le code de sortie est `<1 ou 2>` : il signale la présence d'alertes, ce n'est pas une erreur d'exécution. Les rapports sont dans `reports/zap/`.
+Les rapports sont enregistrés dans `reports/zap/`.
+
+#### 4.1 Code de sortie du scan
+
+Le script `zap-baseline.py` se termine avec un **code de sortie 2**. Ce n'est pas une erreur d'exécution : le script utilise ce code pour résumer le résultat du scan.
+
+| Code | Signification |
+|---|---|
+| 0 | Aucune alerte |
+| 1 | Au moins une règle en échec (FAIL) |
+| 2 | Au moins un avertissement (WARN), aucun échec |
+| 3 | Erreur d'exécution du script |
+
+À la fin du scan, le terminal affiche le résumé suivant :
+
+```text
+FAIL-NEW: 0     FAIL-INPROG: 0  WARN-NEW: 13    WARN-INPROG: 0  INFO: 0 IGNORE: 0       PASS: 55
+```
+
+`FAIL-NEW: 0` et `WARN-NEW: 13` correspondent à la ligne 2 du tableau : des avertissements, aucun échec. Par défaut, ZAP classe les règles en avertissement, et aucune n'est configurée en échec, d'où l'absence de FAIL. Le code est déduit de ce résumé, car il n'a pas été relevé directement sur ce premier scan ; il est mesuré sur le scan de contrôle de la section 8. C'est ce code que lit un pipeline CI pour décider si l'étape réussit ou échoue (voir section 9).
 
 ![Résultat du scan baseline](screenshots/ws4-03-baseline-terminal.png)
 
 *Figure 3 : Résumé du scan passif dans le terminal.*
 
+#### 4.2 Résultats
+
 ![Synthèse du rapport baseline](screenshots/ws4-04-baseline-summary.png)
 
 *Figure 4 : Synthèse des alertes par niveau de risque.*
 
+Le scan a relevé 15 types d'alertes, dont aucune de niveau High :
+
 | Niveau de risque | Nombre d'alertes |
 |---|---|
-| High | `<n>` |
-| Medium | `<n>` |
-| Low | `<n>` |
-| Informational | `<n>` |
+| High | 0 |
+| Medium | 4 |
+| Low | 7 |
+| Informational | 4 |
 
-#### 4.1 Cookies
+![Liste des alertes du scan baseline](screenshots/ws4-04b-baseline-alerts-list.png)
 
-![Alertes cookies](screenshots/ws4-05-baseline-cookies.png)
+*Figure 5 : Liste des alertes du scan passif, avec leur niveau de risque et leur nombre d'instances.*
 
-*Figure 5 : Alertes liées aux cookies.*
+#### 4.3 Cookies
+
+Une seule alerte concerne les cookies : *Cookie without SameSite Attribute*, sur le cookie de session `JSESSIONID` (1 instance).
+
+![Alerte cookie](screenshots/ws4-05-baseline-cookies.png)
+
+*Figure 6 : Alerte sur l'attribut SameSite du cookie JSESSIONID.*
 
 | Cookie | HttpOnly | Secure | SameSite | Risque |
 |---|---|---|---|---|
-| `<JSESSIONID ?>` | `<oui/non>` | `<oui/non>` | `<oui/non>` | `<...>` |
+| `JSESSIONID` | Oui (vérifié avec `curl -I`, activé par défaut par Tomcat) | Non évalué (application servie en HTTP) | Absent | Faible |
 
-`HttpOnly` empêche JavaScript de lire le cookie (protection contre le vol de session via XSS). `Secure` impose l'envoi en HTTPS uniquement. `SameSite` limite l'envoi du cookie dans les requêtes inter-sites (protection contre le CSRF).
+`HttpOnly` empêche JavaScript de lire le cookie (protection contre le vol de session via XSS). `Secure` impose l'envoi en HTTPS uniquement. `SameSite` limite l'envoi du cookie dans les requêtes inter-sites (protection contre le CSRF). Les alertes sur `Secure` et sur HSTS n'apparaissent pas, car elles ne sont levées que sur des réponses HTTPS.
 
-#### 4.2 En-têtes de sécurité manquants
+#### 4.4 En-têtes de sécurité manquants
 
 ![En-têtes manquants](screenshots/ws4-06-baseline-headers.png)
+![En-têtes manquants](screenshots/ws4-06-baseline-headers2.png)
 
-*Figure 6 : Alertes sur les en-têtes de sécurité.*
+*Figure 7 : Alerte Content Security Policy (CSP) Header Not Set.*
 
-| En-tête | Rôle | Risque si absent |
+| Alerte ZAP | Niveau | En-tête attendu | Rôle | Risque si absent |
+|---|---|---|---|---|
+| Content Security Policy (CSP) Header Not Set | Medium | `Content-Security-Policy` | Limite les sources de scripts autorisées | XSS |
+| Missing Anti-clickjacking Header | Medium | `X-Frame-Options` ou `frame-ancestors` | Interdit l'inclusion de la page dans une iframe | Clickjacking |
+| X-Content-Type-Options Header Missing | Low | `X-Content-Type-Options` | Empêche le MIME sniffing | Exécution de contenu détourné |
+| Permissions Policy Header Not Set | Low | `Permissions-Policy` | Restreint les fonctions du navigateur (caméra, micro, géolocalisation) | Abus de fonctionnalités |
+| Cross-Origin Embedder / Opener / Resource Policy | Low | `Cross-Origin-*` | Isole le contexte de la page des autres origines | Fuites inter-origines |
+
+#### 4.5 Autres alertes notables
+
+| Alerte ZAP | Niveau | Explication |
 |---|---|---|
-| Content-Security-Policy | Limite les sources de scripts autorisées | XSS |
-| X-Frame-Options | Interdit l'inclusion de la page dans une iframe | Clickjacking |
-| X-Content-Type-Options | Empêche le MIME sniffing | Exécution de contenu détourné |
-| Strict-Transport-Security | Force l'usage de HTTPS | Interception, downgrade |
+| Absence of Anti-CSRF Tokens | Medium | Les formulaires (connexion, inscription) n'incluent pas de jeton anti-CSRF : un site tiers pourrait déclencher des actions au nom d'un utilisateur connecté |
+| Sub Resource Integrity Attribute Missing, Cross-Domain JavaScript Source File Inclusion | Medium / Low | Des scripts sont chargés depuis un domaine externe sans attribut `integrity` : si ce domaine est compromis, du code malveillant s'exécute dans LiveChat (risque de chaîne d'approvisionnement, lié au workshop 3) |
+| User Controllable HTML Element Attribute (Potential XSS) | Informational | Des valeurs contrôlées par l'utilisateur apparaissent dans des attributs HTML : à vérifier lors du scan actif |
+
+<!-- ============ PHASE 2 : ajouter la section 5 ============ -->
+
+### 5. Scan actif (full scan)
+
+> Réalisé uniquement sur l'instance locale de test. Le scan actif envoie de vraies attaques et crée de nombreux comptes dans la base : il ne doit jamais être lancé sur une application dont nous ne sommes pas propriétaires.
+
+Commande exécutée (`-m 5` limite l'exploration à 5 minutes) :
+
+```powershell
+docker run --rm -v "${PWD}/reports/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py -t http://host.docker.internal:8080 -r full-report.html -J full-report.json -m 5
+```
+
+![Résultat du scan actif](screenshots/ws4-07-fullscan-terminal.png)
+
+*Figure 8 : Résumé du scan actif dans le terminal.*
+
+```text
+FAIL-NEW: 0     FAIL-INPROG: 0  WARN-NEW: 13    WARN-INPROG: 0  INFO: 0 IGNORE: 0       PASS: 130
+```
+
+Le scan actif a exécuté 143 règles : 130 sont passées sans alerte, 13 ont produit un avertissement (code de sortie 2, comme pour le scan passif). Parmi les règles passées figurent l'injection SQL (y compris MySQL en mode temporel), le XSS persistant, le path traversal, l'injection de commandes, l'injection de templates, Log4Shell, Spring4Shell et XXE.
+
+![Synthèse du scan actif](screenshots/ws4-08-fullscan-summary.png)
+
+*Figure 9 : Synthèse du rapport du scan actif.*
+
+Par rapport au scan passif, le scan actif ajoute quatre alertes :
+
+| Alerte ZAP | Niveau | URL | Instances |
+|---|---|---|---|
+| Cross Site Scripting (Reflected) | `<niveau>` | `/register` | 4 |
+| Cross Site Scripting (DOM Based) | `<niveau>` | `/register` | 2 |
+| Anti-CSRF Tokens Check | `<niveau>` | `/register`, `/login` | 2 |
+| Cookie Slack Detector | `<niveau>` | `/`, `/login`, `/register` | 6 |
+
+![Détail de l'alerte XSS](screenshots/ws4-09-fullscan-xss-detail.png)
+
+*Figure 10 : Détail de l'alerte Cross Site Scripting (Reflected) : URL, paramètre, attaque et preuve.*
+
+| Champ | Valeur |
+|---|---|
+| URL | `<url>` |
+| Méthode | `<GET/POST>` |
+| Paramètre | `<paramètre>` |
+| Attaque (payload) | `<payload>` |
+| Preuve (evidence) | `<evidence>` |
+
+**Limite de couverture** : le scan n'a exploré que 6 URLs (`/`, `/login`, `/register`, `robots.txt`, `sitemap.xml`...). Les pages situées derrière l'authentification, notamment le chat lui-même et ses WebSockets, ne sont pas atteintes par ZAP sans configuration d'une session authentifiée. L'absence d'alerte de XSS persistant ne prouve donc pas que le chat soit protégé.
+
+<!-- ============ PHASE 3 : ajouter la section 6 ============ -->
+
+### 6. Vérification manuelle
+
+Un scanner automatique peut produire des faux positifs : chaque alerte importante doit être confirmée à la main.
+
+**XSS réfléchi sur `/register`** : `<décrire la manipulation : champ rempli, payload saisi, ce qui s'est affiché>`
+
+![Confirmation manuelle du XSS](screenshots/ws4-10-xss-manual-test.png)
+
+*Figure 11 : `<boîte d'alerte affichée, ou code source montrant le payload non échappé>`.*
+
+**XSS basé sur le DOM** : `<URL du rapport ouverte dans le navigateur, résultat>`
+
+**XSS stocké dans le chat (test manuel)** : `<message envoyé : <img src=x onerror=alert(1)>, résultat>`
+
+Conclusion : `<alerte confirmée / faux positif, avec la justification>`.
+
+<!-- ============ PHASE 4 et 5 : ajouter les sections 7 et 8 ============ -->
+
+### 7. Analyse des risques (DREAD et OWASP Top 10:2025)
+
+Scores calculés avec la méthode vue en cours : Score = (D + R + E + A + D) / 5. Échelle : 0 à 3,3 faible, 3,4 à 6,6 moyen, 6,7 à 10 élevé.
+
+| Vulnérabilité | D | R | E | A | D | Score | Niveau | Catégorie OWASP Top 10:2025 |
+|---|---|---|---|---|---|---|---|---|
+| XSS réfléchi sur `/register` | 6 | 8 | 8 | 5 | 8 | 7,0 | Élevé | A05 Injection |
+| Absence de jeton anti-CSRF | 5 | 8 | 5 | 5 | 8 | 6,2 | Moyen | A01 Broken Access Control |
+| En-têtes de sécurité manquants (CSP, anti-clickjacking) | 3 | 9 | 5 | 7 | 9 | 6,6 | Moyen | A02 Security Misconfiguration |
+| Scripts externes sans contrôle d'intégrité | `<D>` | `<R>` | `<E>` | `<A>` | `<D>` | `<score>` | `<niveau>` | A03 Software Supply Chain Failures |
+
+Justification des notes : `<une phrase par ligne : pourquoi ces valeurs>`.
+
+### 8. Remédiation
+
+Corrections appliquées, chacune dans un commit dédié :
+
+| Problème | Correctif | Fichier modifié |
+|---|---|---|
+| En-têtes de sécurité manquants | Filtre Servlet qui ajoute `X-Content-Type-Options`, `X-Frame-Options`, `Content-Security-Policy` (directives `frame-ancestors`, `object-src`, `base-uri`, `form-action`), `Permissions-Policy`, `Referrer-Policy`, `Cross-Origin-Opener-Policy` et `Cross-Origin-Resource-Policy` | `src/main/java/util/SecurityHeadersFilter.java` |
+| Cookie de session sans `SameSite` | Attribut `SameSite=Lax` configuré dans le contexte Tomcat | `src/main/webapp/META-INF/context.xml` |
+| XSS réfléchi sur `/register` | `<échappement de la sortie : fichier et ligne>` | `<fichier>` |
+
+![Correctif appliqué](screenshots/ws4-11-fix-diff.png)
+
+*Figure 12 : Code du correctif.*
+
+![En-têtes après correction](screenshots/ws4-12-headers-after-fix.png)
+
+*Figure 13 : En-têtes de réponse HTTP après correction (`curl -I`).*
+
+#### 8.1 Scan de contrôle après correction
+
+```powershell
+docker run --rm -v "${PWD}/reports/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://host.docker.internal:8080 -r baseline-after-fix.html -J baseline-after-fix.json
+```
+
+Code de sortie relevé : `<valeur>`. Résumé : `<ligne FAIL-NEW / WARN-NEW / PASS>`.
+
+![Scan après correction](screenshots/ws4-13-baseline-after-fix.png)
+
+*Figure 14 : Synthèse du scan passif après correction.*
+
+| Alerte | Avant | Après |
+|---|---|---|
+| Content Security Policy (CSP) Header Not Set | Medium | `<résultat>` |
+| Missing Anti-clickjacking Header | Medium | `<résultat>` |
+| X-Content-Type-Options Header Missing | Low | `<résultat>` |
+| Permissions Policy Header Not Set | Low | `<résultat>` |
+| Cookie without SameSite Attribute | Low | `<résultat>` |
+| Cross-Origin-Opener / Resource-Policy Header Missing | Low | `<résultat>` |
+| Cross Site Scripting (Reflected) (scan actif) | `<niveau>` | `<résultat>` |
+
+**Alertes volontairement non corrigées** :
+
+| Alerte | Raison |
+|---|---|
+| Absence of Anti-CSRF Tokens | Demande une modification de chaque formulaire et de chaque servlet : prévue comme amélioration future |
+| Sub Resource Integrity Attribute Missing | Demande de calculer l'empreinte de chaque script externe ou de les héberger localement |
+| Cross-Origin-Embedder-Policy | `require-corp` empêcherait le chargement de scripts externes qui n'envoient pas l'en-tête adéquat |
+
+<!-- ============ PHASE 6 : ajouter la section 9 ============ -->
+
+### 9. Intégration CI/CD
+
+Le fichier `.github/workflows/dast-zap.yml` lance le scan passif à chaque Pull Request vers `main` et à la demande :
+
+1. **Checkout** du code.
+2. **Démarrage de LiveChat** avec `docker compose up -d --build`.
+3. **Attente** que l'application réponde sur `http://localhost:8080`.
+4. **Scan ZAP baseline** avec l'option `-I`, qui évite d'échouer sur de simples avertissements ; une règle en échec (code 1) ou une erreur (code 3) fait en revanche échouer l'étape.
+5. **Publication** du rapport HTML et JSON comme artefact du run.
+
+Les actions GitHub sont épinglées sur un SHA de commit, comme dans le workflow du workshop 3.
+
+![Exécution GitHub Actions](screenshots/ws4-14-github-actions-run.png)
+
+*Figure 15 : Exécution du workflow DAST dans l'onglet Actions.*
+
+![Artefact du rapport ZAP](screenshots/ws4-15-zap-artifact.png)
+
+*Figure 16 : Artefact `zap-report` téléchargeable.*
+
+### 10. Discussion
+
+**Limites du DAST**
+- La couverture dépend de ce que ZAP découvre : sans session authentifiée, il n'atteint pas le chat ni ses WebSockets (6 URLs explorées).
+- Faux positifs possibles : chaque alerte importante doit être vérifiée manuellement (section 6).
+- Le scan actif est long, envoie de vraies attaques et pollue la base de données.
+- Certaines alertes n'ont de sens qu'en HTTPS (`Secure`, HSTS) : elles ne peuvent pas être évaluées sur une instance locale en HTTP.
+
+**Complémentarité SAST, SCA et DAST**
+- Le SAST (workshop 2) trouve les défauts dans le code avant l'exécution.
+- Le SCA (workshop 3) trouve les composants vulnérables ; il a par exemple signalé une dépendance transitive que les autres outils ne voyaient pas.
+- Le DAST (workshop 4) teste l'application telle qu'elle est déployée : il détecte les défauts de configuration (en-têtes, cookies) et les failles d'exécution que l'analyse du code ne montre pas.
+
+**Bonnes pratiques d'intégration dans un pipeline CI/CD**
+- Scan passif (baseline) à chaque Pull Request : rapide et sans risque.
+- Scan actif planifié (par exemple chaque nuit) sur un environnement de pré-production, jamais en production.
+- Seuils de blocage (gating) : configurer certaines règles en FAIL avec un fichier de règles (`-c`) et conserver une liste des faux positifs acceptés.
+- Scans authentifiés pour couvrir l'ensemble de l'application.
+- Conservation des rapports comme artefacts pour tracer l'évolution.
+
+### 11. Conclusion
+
+`<5 à 6 lignes : ce que le workshop a permis d'apprendre, principales vulnérabilités trouvées, corrections apportées, résultat avant/après, limites>`
+
+### 12. Livrables
+
+- `reports/zap/` : rapports baseline, scan actif et scan après correction
+- `.github/workflows/dast-zap.yml` : workflow CI du scan DAST
+- `Dockerfile` et `docker-compose.yml` : exécution locale de LiveChat
