@@ -18,6 +18,8 @@ updates:
       - "docker"
     commit-message:
       prefix: "docker"
+    cooldown:
+      default-days: 7
 
   # workshop 5 : image du docker-compose.yml (mysql)
   - package-ecosystem: "docker-compose"
@@ -32,6 +34,8 @@ updates:
     ignore:
       - dependency-name: "mysql"
         update-types: ["version-update:semver-major"]
+    cooldown:
+      default-days: 7
 
   # workshop 5 : actions des workflows
   - package-ecosystem: "github-actions"
@@ -47,3 +51,5 @@ updates:
       github-actions:
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
