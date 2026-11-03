@@ -1,4 +1,9 @@
 target
 .git
+.github
 .idea
+.mvn
+reports
 screenshots
+*.env
+*.log
