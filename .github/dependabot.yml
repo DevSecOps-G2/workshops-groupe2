@@ -1,8 +1,49 @@
 version: 2
 updates:
+  # workshop 3
   - package-ecosystem: "maven"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
+
+  # workshop 5 : image du Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "docker"
+
+  # workshop 5 : image du docker-compose.yml (mysql)
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "compose"
+    ignore:
+      - dependency-name: "mysql"
+        update-types: ["version-update:semver-major"]
+
+  # workshop 5 : actions des workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
