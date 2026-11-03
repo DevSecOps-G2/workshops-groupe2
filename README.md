@@ -531,7 +531,7 @@ docker run --rm -v "${PWD}/reports/zap:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stab
 FAIL-NEW: 0     FAIL-INPROG: 0  WARN-NEW: 13    WARN-INPROG: 0  INFO: 0 IGNORE: 0       PASS: 130
 ```
 
-Le scan actif a exécuté 143 règles : 130 sont passées sans alerte, 13 ont produit un avertissement (code de sortie 2, comme pour le scan passif). Parmi les règles passées figurent l'injection SQL (y compris MySQL en mode temporel), le XSS persistant, le path traversal, l'injection de commandes, l'injection de templates, Log4Shell, Spring4Shell et XXE.
+Le scan actif a exécuté 143 règles : 130 sont passées sans alerte, 13 ont produit un avertissement (code de sortie 2, comme pour le scan passif). Parmi les règles passées figurent l'injection SQL (y compris MySQL en mode temporel), le XSS persistant, le path traversal, l'injection de commandes, l'injection de templates, Log4Shell, Spring4Shell et XXE. Attention : la règle de XSS persistant est passée uniquement parce que le scan n'était pas authentifié et n'a pas atteint les pages protégées ; la vérification manuelle de la section 6 a pourtant mis en évidence un XSS stocké.
 
 ![Synthèse du scan actif](screenshots/ws4-08-fullscan-summary.png)
 
@@ -576,21 +576,39 @@ Par rapport au scan passif, le scan actif ajoute quatre alertes :
 
 La preuve est identique à la charge envoyée : la réponse du serveur contient la valeur saisie sans transformation. Les caractères `">` placés au début du payload servent à sortir d'un attribut HTML (par exemple `value="..."`), ce qui permet ensuite d'insérer une balise `<script>`. ZAP signale donc un XSS réfléchi sur le formulaire d'inscription, que la vérification manuelle de la section 6 permet de confirmer ou non.
 
-**Limite de couverture** : le scan n'a exploré que 6 URLs (`/`, `/login`, `/register`, `robots.txt`, `sitemap.xml`...). Les pages situées derrière l'authentification, notamment le chat lui-même et ses WebSockets, ne sont pas atteintes par ZAP sans configuration d'une session authentifiée. L'absence d'alerte de XSS persistant ne prouve donc pas que le chat soit protégé.
+**Limite de couverture** : le scan n'a exploré que 6 URLs (`/`, `/login`, `/register`, `robots.txt`, `sitemap.xml`...). Les pages situées derrière l'authentification, notamment le chat lui-même et ses WebSockets, ne sont pas atteintes par ZAP sans configuration d'une session authentifiée. L'absence d'alerte de XSS persistant ne prouve donc pas que le chat soit protégé. Cette limite s'est vérifiée : un XSS stocké a été trouvé manuellement sur `/home` (section 6).
 
 ### 6. Vérification manuelle
 
-Un scanner automatique peut produire des faux positifs : les alertes importantes doivent être confirmées à la main, uniquement sur l'instance locale.
+Un scanner automatique peut produire des faux positifs. Les alertes importantes doivent être vérifiées manuellement sur l’instance locale.
 
-**XSS réfléchi sur `/register`** : le payload `"><scrIpt>alert(1);</scRipt>` a été saisi dans le champ Prénom du formulaire `http://localhost:8080/register`, avec deux mots de passe différents afin de provoquer une erreur de validation qui réaffiche le formulaire. Résultat : **[À COMPLÉTER : boîte d'alerte affichée, ou valeur correctement échappée]**.
+**XSS réfléchi sur `/register`** : le payload `"><scrIpt>alert(1);</scRipt>` a été saisi dans le champ **Prénom** du formulaire `http://localhost:8080/register`, les autres champs contenant des valeurs normales. Après validation, une boîte d’alerte « 1 » s’est affichée sur la page `/register` : l’alerte de XSS réfléchi signalée par ZAP est **confirmée**.
 
 ![Confirmation manuelle du XSS](screenshots/ws4-10-xss-manual-test.png)
 
-*Figure 12 : Résultat du test manuel du XSS réfléchi sur le formulaire d'inscription.*
+*Figure 12 : Résultat du test manuel du XSS réfléchi sur le formulaire d’inscription.*
 
-**XSS basé sur le DOM** : l'URL signalée par ZAP a été ouverte dans le navigateur, en remplaçant `host.docker.internal` par `localhost`. Résultat : **[À COMPLÉTER : boîte « 5397 » affichée, ou aucune exécution observée]**.
+**XSS basé sur le DOM** : l’URL signalée par ZAP a été ouverte dans le navigateur après remplacement de `host.docker.internal` par `localhost`. Aucune boîte « 5397 » ne s’est affichée lors de ce test : l’alerte **n’a pas été reproduite manuellement** et constitue un **faux positif probable**.
 
-Conclusion : **[À COMPLÉTER : alertes confirmées ou faux positif, avec la justification]**.
+**XSS stocké, découvert manuellement** : le même payload, saisi comme prénom lors de l’inscription, a été enregistré en base de données. Après connexion avec un autre compte (`hajar`), la page `/home`, qui affiche la liste des utilisateurs, a déclenché une boîte d’alerte « 1 ». Le XSS est **stocké** et s’exécute lorsqu’un utilisateur consulte cette liste. ZAP ne l’avait pas signalé, car le scan n’était pas authentifié et n’avait pas atteint cette page.
+
+![XSS stocké sur la page d'accueil](screenshots/ws4-10b-xss-stocke-home.png)
+
+*Figure 13 : Boîte d’alerte affichée sur `/home` après connexion.*
+
+La page « Informations du compte » du compte de test affiche également le reste du payload (`">`) : la balise `<script>` y a été interprétée par le navigateur au lieu d’être affichée comme du texte.
+
+![Page de compte du compte piégé](screenshots/ws4-10c-xss-profil.png)
+
+*Figure 14 : Page de compte où le payload est interprété comme du HTML.*
+
+| Alerte | Origine | Résultat de la vérification |
+|---|---|---|
+| XSS réfléchi sur `/register` | Scan actif ZAP et test manuel | Confirmé |
+| XSS basé sur le DOM | Scan actif ZAP et test manuel | Non reproduit ; faux positif probable |
+| XSS stocké sur `/home` et la page de compte | Test manuel | Confirmé ; non détecté par ZAP |
+
+**Conclusion :** le XSS réfléchi sur le formulaire d’inscription est confirmé. Le test manuel a également révélé un XSS stocké que le scan automatique n’avait pas détecté, ce qui montre une limite d’un scan non authentifié. Le XSS basé sur le DOM signalé par ZAP n’a pas été reproduit lors de la vérification manuelle ; il est donc considéré comme un faux positif probable.
 
 ### 7. Analyse des risques (DREAD et OWASP Top 10:2025)
 
@@ -599,12 +617,14 @@ Scores calculés avec la méthode vue en cours : Score = (D + R + E + A + D) / 5
 | Vulnérabilité | D | R | E | A | D | Score | Niveau | Catégorie OWASP Top 10:2025 |
 |---|---|---|---|---|---|---|---|---|
 | XSS réfléchi sur `/register` | 6 | 8 | 8 | 5 | 8 | 7,0 | Élevé | A05 Injection |
+| XSS stocké sur `/home` et page de compte | 7 | 9 | 7 | 9 | 5 | 7,4 | Élevé | A05 Injection |
 | Absence de jeton anti-CSRF | 5 | 8 | 5 | 5 | 8 | 6,2 | Moyen | A01 Broken Access Control |
 | En-têtes de sécurité manquants (CSP, anti-clickjacking) | 3 | 9 | 5 | 7 | 9 | 6,6 | Moyen | A02 Security Misconfiguration |
 | Scripts externes sans contrôle d'intégrité | 7 | 3 | 3 | 10 | 8 | 6,2 | Moyen | A03 Software Supply Chain Failures |
 
 Justification des notes :
 - **XSS réfléchi** : il suffit d'un navigateur pour l'exploiter, il est reproductible à chaque fois et facile à découvrir par un scanner ; l'impact reste limité car le formulaire d'inscription est utilisé avant la connexion.
+- **XSS stocké** : le payload est enregistré en base et s'exécute chez tout utilisateur connecté qui consulte la liste, à chaque affichage, donc tous les comptes sont touchés. Le cookie de session est `HttpOnly`, ce qui empêche son vol direct, mais le script peut agir au nom de la victime. La découverte est moins évidente pour un scanner, car il faut être authentifié et avoir créé un compte piégé au préalable.
 - **Absence de jeton anti-CSRF** : un site tiers peut déclencher des requêtes au nom d'un utilisateur connecté, ce qui touche potentiellement tous les utilisateurs.
 - **En-têtes manquants** : ils n'ouvrent pas une faille à eux seuls mais affaiblissent les défenses contre le XSS et le clickjacking ; ils sont présents sur toutes les pages.
 - **Scripts externes** : si le domaine tiers est compromis, tous les utilisateurs sont touchés, mais l'attaque est peu reproductible et difficile à mener.
@@ -615,7 +635,7 @@ Justification des notes :
 
 | Priorité | Problème | Solution proposée | Catégorie OWASP Top 10:2025 |
 |---|---|---|---|
-| 1 | XSS réfléchi sur `/register` | Échapper toute donnée utilisateur affichée, valider les champs côté serveur | A05 Injection |
+| 1 | XSS réfléchi sur `/register` et XSS stocké sur `/home` et la page de compte | Échapper toute donnée utilisateur affichée, valider les champs côté serveur, nettoyer les données déjà enregistrées | A05 Injection |
 | 2 | XSS basé sur le DOM | Ne pas injecter de données issues de l'URL avec `innerHTML` ou `document.write` | A05 Injection |
 | 3 | Absence de jeton anti-CSRF | Jeton par session dans chaque formulaire, vérifié côté serveur | A01 Broken Access Control |
 | 4 | CSP et protection anti-clickjacking manquantes | Ajouter les en-têtes de sécurité (filtre Servlet ou reverse proxy) | A02 Security Misconfiguration |
@@ -624,6 +644,8 @@ Justification des notes :
 | 7 | Application servie en HTTP | TLS, HSTS, cookie `Secure`, WebSocket `wss://` | A04 Cryptographic Failures |
 
 #### 8.1 Échapper les données affichées (XSS)
+
+Cette correction doit être appliquée à **toutes les pages qui affichent des données saisies par l'utilisateur** : le formulaire d'inscription (XSS réfléchi), mais aussi la liste des utilisateurs de `/home` et la page de compte (XSS stocké). Pour le XSS stocké, les données déjà enregistrées en base doivent aussi être nettoyées.
 
 Exemple type, à adapter au code réel de la page d'inscription :
 
@@ -779,17 +801,18 @@ jobs:
 
 ![Exécution GitHub Actions](screenshots/ws4-11-github-actions-run.png)
 
-*Figure 13 : Exécution du workflow DAST dans l'onglet Actions.*
+*Figure 15 : Exécution du workflow DAST dans l'onglet Actions.*
 
 ![Artefact du rapport ZAP](screenshots/ws4-12-zap-artifact.png)
 
-*Figure 14 : Artefact `zap-report` téléchargeable.*
+*Figure 16 : Artefact `zap-report` téléchargeable.*
 
 ### 10. Discussion
 
 **Limites du DAST**
 - La couverture dépend de ce que ZAP découvre : sans session authentifiée, il n'atteint pas le chat ni ses WebSockets (6 URLs explorées).
 - Faux positifs possibles : chaque alerte importante doit être vérifiée manuellement (section 6).
+- Un test manuel a trouvé un XSS stocké sur `/home` que le scan automatique n'avait pas détecté : un DAST non authentifié ne remplace pas la vérification manuelle.
 - Le scan actif est long, envoie de vraies attaques et pollue la base de données : il a créé de nombreux comptes de test dans LiveChat.
 - Certaines alertes n'ont de sens qu'en HTTPS (`Secure`, HSTS) : elles ne peuvent pas être évaluées sur une instance locale en HTTP.
 
@@ -809,7 +832,7 @@ jobs:
 
 ### 11. Conclusion
 
-Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan passif puis en scan actif. Le scan passif a relevé 15 types d'alertes sans niveau High, principalement des en-têtes de sécurité manquants, un cookie de session sans attribut SameSite et des scripts externes sans contrôle d'intégrité. Le scan actif a ajouté deux alertes High de type XSS sur le formulaire d'inscription, que nous avons vérifiées manuellement. Conformément aux consignes, aucune correction n'a été appliquée : nous avons proposé des solutions classées par priorité (échappement des sorties, jetons anti-CSRF, en-têtes de sécurité, SameSite, SRI, HTTPS). Le scan passif est intégré à un pipeline GitHub Actions qui publie son rapport à chaque Pull Request. Les limites principales sont la couverture réduite du scan (6 URLs, pas de session authentifiée) et la nécessité de vérifier manuellement chaque alerte.
+Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan passif puis en scan actif. Le scan passif a relevé 15 types d'alertes sans niveau High, principalement des en-têtes de sécurité manquants, un cookie de session sans attribut SameSite et des scripts externes sans contrôle d'intégrité. Le scan actif a signalé deux alertes High de type XSS sur le formulaire d’inscription. Le XSS réfléchi a été confirmé manuellement ; le XSS basé sur le DOM n’a pas été reproduit et constitue un faux positif probable. La vérification manuelle a de plus révélé un XSS stocké sur `/home`, que le scan non authentifié n'avait pas détecté. Conformément aux consignes, aucune correction n'a été appliquée : nous avons proposé des solutions classées par priorité (échappement des sorties, jetons anti-CSRF, en-têtes de sécurité, SameSite, SRI, HTTPS). Le scan passif est intégré à un pipeline GitHub Actions qui publie son rapport à chaque Pull Request. Les limites principales sont la couverture réduite du scan (6 URLs, pas de session authentifiée) et la nécessité de vérifier manuellement chaque alerte.
 
 ### 12. Livrables
 
