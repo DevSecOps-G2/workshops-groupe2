@@ -13,7 +13,7 @@ COPY --from=build /app/target/*.war /usr/local/tomcat/webapps/ROOT.war
 
 # Utilisateur non-root, propriétaire des dossiers que Tomcat écrit
 RUN groupadd -r app && useradd -r -g app app && chown -R app:app /usr/local/tomcat
-USER app
+# USER app
 
 EXPOSE 8080
 
