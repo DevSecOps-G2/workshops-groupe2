@@ -1,0 +1,66 @@
+name: Trivy - Sécurité du conteneur
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: "0 3 * * 1"        # chaque lundi à 03h00 UTC
+  workflow_dispatch:           # lancement manuel possible
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGE: livechat-app:${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # 1. Mauvaises configurations du Dockerfile
+      - name: Trivy - analyse du Dockerfile
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
+      # 2. Construction de l'image
+      - name: Build image
+        run: docker build -t "$IMAGE" .
+
+      # 3. Rapport lisible (ne bloque jamais)
+      - name: Trivy - rapport de l'image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          output: trivy-report.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+          if-no-files-found: warn
+
+      # 4. Security gate
+      - name: Trivy - gate de blocage
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
