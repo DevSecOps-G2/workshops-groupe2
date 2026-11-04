@@ -818,6 +818,9 @@ Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan
 - `Dockerfile` et `docker-compose.yml` : exécution locale de LiveChat
 - `.semgrepignore` : exclusion des rapports HTML de ZAP, générés automatiquement, de l'analyse Semgrep
 
+---
+<a id="workshop4"></a>
+
 ## Workshop 5 : Sécurisation des conteneurs avec Trivy
 
 ### 1. Objectif
