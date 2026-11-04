@@ -840,3 +840,255 @@ Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan
 - `.github/workflows/dast-zap.yml` : workflow CI du scan DAST
 - `Dockerfile` et `docker-compose.yml` : exécution locale de LiveChat
 - `.semgrepignore` : exclusion des rapports HTML de ZAP, générés automatiquement, de l'analyse Semgrep
+
+---
+<a id="workshop4"></a>
+
+## Workshop 5 : Sécurisation des conteneurs avec Trivy
+
+### 1. Objectif
+
+Ajouter une **couche conteneur** à la chaîne DevSecOps du projet LiveChat (Tomcat 11 + MySQL, lancés avec Docker Compose) :
+
+1. scanner l'image Docker avec **Trivy** (vulnérabilités, mauvaises configurations, secrets) ;
+2. se concentrer sur les failles **HIGH** et **CRITICAL** ;
+3. durcir le `Dockerfile` ;
+4. rescanner pour vérifier ;
+5. automatiser le contrôle dans GitHub Actions, avec un **seuil de blocage** basé sur la sévérité.
+
+Ce workshop complète les précédents :
+
+| Couche | Outil | Workshop |
+|---|---|---|
+| Code source | Semgrep, SonarQube | 2 |
+| Dépendances | Dependabot, OWASP Dependency-Check | 3 |
+| Application en exécution | OWASP ZAP | 4 |
+| **Image conteneur** | **Trivy** | **5** |
+
+### 2. Outil utilisé
+
+Trivy **0.76.1**.
+
+![Version de Trivy](screenshots/ws5-01-trivy-version.png)
+
+### 3. Méthode
+
+**Scanner → comprendre → corriger → rescanner → automatiser.**
+
+Chaque correction est vérifiée par un nouveau scan, et le contrôle final est confié au pipeline pour qu'il ne dépende plus d'une action manuelle.
+
+### 4. Scans initiaux (avant correction)
+
+#### 4.1 Image applicative
+
+Le scan de l'image de l'application (archive `image.tar`, produite avec `docker save`) remonte **65 failles : 12 LOW, 53 MEDIUM, 0 HIGH, 0 CRITICAL**. Toutes sont au statut `affected` et **aucune n'a de version corrigée** : on ne peut donc pas les corriger en mettant à jour un paquet.
+
+![Scan initial de l'image applicative](screenshots/ws5-02-scan-avant-app.png)
+
+#### 4.2 Dockerfile (mauvaises configurations)
+
+La commande `trivy config .` détecte **2 mauvaises configurations** (25 tests réussis sur 27) :
+
+| Règle | Gravité | Problème |
+|---|---|---|
+| DS-0002 | **HIGH** | Aucune instruction `USER` : le conteneur tourne en **root** |
+| DS-0026 | LOW | Aucun `HEALTHCHECK` |
+
+![Trivy config avant correction](screenshots/ws5-03-config-avant.png)
+
+#### 4.3 Secrets
+
+`trivy image --scanners secret` ne détecte **aucun secret** dans l'image.
+
+![Scan des secrets](screenshots/ws5-04-secrets.png)
+
+#### 4.4 Image de la base de données (`mysql:8.0`)
+
+Le scan de l'image MySQL, utilisée par `docker-compose.yml`, est nettement moins bon que celui de l'application : **114 failles HIGH ou CRITICAL**.
+
+| Composant | Type | HIGH | CRITICAL | Total |
+|---|---|---|---|---|
+| Paquets système (Oracle Linux 9.7) | `oracle` | 79 | 0 | 79 |
+| Bibliothèques Python de MySQL Shell (`certifi`, `cryptography`, `pyOpenSSL`, `urllib3`) | `python-pkg` | 8 | 1 | 9 |
+| Binaire Go `gosu` (bibliothèque standard Go v1.24.6) | `gobinary` | 25 | 1 | 26 |
+| **Total** | | **112** | **2** | **114** |
+
+Les deux failles CRITICAL concernent `certifi` (GHSA-6q48-6c7w-9gw2, corrigée dans 2026.10.18) et la bibliothèque standard Go de `gosu` (CVE-2025-68121). Plusieurs versions corrigées existent, mais elles dépendent d'une nouvelle image publiée par l'éditeur : elles ne se corrigent pas dans notre `Dockerfile`.
+
+![Scan de l'image mysql:8.0](screenshots/ws5-05-mysql-resume.png)
+
+### 5. Remédiation : durcissement du Dockerfile
+
+**Avant** (partie runtime) :
+
+```dockerfile
+FROM tomcat:11.0-jdk17
+RUN rm -rf /usr/local/tomcat/webapps/*
+COPY --from=build /app/target/*.war /usr/local/tomcat/webapps/ROOT.war
+EXPOSE 8080
+```
+
+**Après :**
+
+```dockerfile
+# ------------ Étape 1 : build ------------
+FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+RUN mvn -q clean package -DskipTests
+
+# ------------ Étape 2 : runtime ------------
+FROM tomcat:11.0-jre17
+
+RUN rm -rf /usr/local/tomcat/webapps/*
+COPY --from=build /app/target/*.war /usr/local/tomcat/webapps/ROOT.war
+
+# Utilisateur non-root, propriétaire des dossiers que Tomcat écrit
+RUN groupadd -r app && useradd -r -g app app && chown -R app:app /usr/local/tomcat
+USER app
+
+EXPOSE 8080
+
+# Test du port avec bash : évite de dépendre de curl
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD bash -c '</dev/tcp/127.0.0.1/8080' || exit 1
+
+CMD ["catalina.sh", "run"]
+```
+
+| Changement | Raison |
+|---|---|
+| `jdk17` → `jre17` | Image d'exécution plus minimale : moins de paquets, donc moins de surface d'attaque |
+| `USER app` (non-root) | Un conteneur compromis n'a plus les droits root, ce qui limite le risque d'évasion (règle DS-0002) |
+| `HEALTHCHECK` | Le conteneur est supervisé par Docker (règle DS-0026) |
+| Build multi-stage conservé | Maven et les sources n'arrivent pas dans l'image finale |
+| `.dockerignore` complété | Les rapports, captures et fichiers sensibles n'entrent pas dans l'image |
+
+### 6. Résultats après correction
+
+| Contrôle | Avant | Après |
+|---|---|---|
+| Misconfigurations du Dockerfile | **2** (1 HIGH, 1 LOW) | **0** |
+| Utilisateur du conteneur | root | `app` |
+| Supervision du conteneur | aucune | `healthy` |
+| Secrets détectés dans l'image | 0 | 0 |
+| Failles HIGH / CRITICAL de l'image applicative | 0 / 0 | 0 / 0 |
+
+![Trivy config après correction](screenshots/ws5-07-config-apres.png)
+
+![Scan de l'image applicative après correction](screenshots/ws5-06-scan-apres-app.png)
+
+L'application démarre normalement, le conteneur est `healthy` et `whoami` répond `app` :
+
+![docker compose ps et whoami](screenshots/ws5-08-app-healthy-whoami.png)
+
+> **À retenir** : l'image applicative ne contenait déjà aucune faille HIGH ou CRITICAL. Le gain de ce workshop porte donc sur la **configuration** (suppression du root, supervision) et sur la **mise en place d'une gate automatique**, pas sur une baisse du nombre de CVE de l'image applicative. Les rapports complets sont dans `reports/trivy/` (`avant.*` et `apres.*`).
+
+### 7. Automatisation : workflow GitHub Actions
+
+Fichier : `.github/workflows/trivy.yml`
+
+| Élément | Détail |
+|---|---|
+| Déclencheurs | Pull Request vers `main`, push sur `main`, planification hebdomadaire (lundi), lancement manuel |
+| Permissions | `contents: read` (moindre privilège) |
+| Actions | Épinglées par SHA de commit, comme dans `ci.yml` |
+
+Le job exécute quatre étapes :
+
+| # | Étape | Bloque ? |
+|---|---|---|
+| 1 | Trivy `config` : analyse du Dockerfile (HIGH, CRITICAL) | Oui |
+| 2 | Construction de l'image Docker | Oui, si le build échoue |
+| 3 | Rapport de l'image, conservé en artefact `trivy-report` | Non |
+| 4 | **Gate** sur l'image | **Oui** |
+
+La gate bloque le pipeline si Trivy trouve une faille **HIGH ou CRITICAL corrigeable** ou un **secret** :
+
+```yaml
+- name: Trivy - gate de blocage
+  uses: aquasecurity/trivy-action@<SHA épinglé>
+  with:
+    image-ref: ${{ env.IMAGE }}
+    scanners: vuln,secret
+    severity: HIGH,CRITICAL
+    ignore-unfixed: true
+    exit-code: "1"
+```
+
+**Pull Request : pipeline vert** (job `trivy`, artefact produit) :
+
+![Pipeline vert sur la Pull Request](screenshots/ws5-09-pipeline-pr-vert.png)
+
+**Test négatif : le pipeline échoue.** Une bonne pratique a été retirée volontairement pour vérifier que la gate bloque (commit `d8047af`). Le job échoue en 31 s, **avant** l'étape de rapport, d'où l'absence d'artefact :
+
+![Pipeline rouge](screenshots/ws5-10-pipeline-rouge.png)
+
+**Retour au vert** après annulation du test (commit `3bb0766`), avec l'artefact `trivy-report` :
+
+![Pipeline vert après correction](screenshots/ws5-11-pipeline-vert.png)
+
+### 8. Dependabot
+
+Le fichier `.github/dependabot.yml` surveille désormais, en plus de Maven :
+
+| Écosystème | Ce qui est surveillé |
+|---|---|
+| `docker` | Les images `FROM` du Dockerfile (`maven`, `tomcat`) |
+| `docker-compose` | Les images du `docker-compose.yml` (`mysql`), sans saut de version majeure automatique |
+| `github-actions` | Les actions des workflows, regroupées dans une seule PR |
+
+La boucle devient : **Dependabot propose une mise à jour, Trivy la vérifie dans la Pull Request, une personne décide de fusionner.**
+
+Dependabot ne lit sa configuration que sur la branche par défaut (`main`) : il s'active après la fusion de la Pull Request.
+
+**Résultat observé.** Une fois la configuration sur `main`, Dependabot a ouvert **8 Pull Requests**, toutes avec leurs **4 vérifications au vert** (4/4). Chaque écosystème est représenté :
+
+| PR | Écosystème | Mise à jour proposée |
+|---|---|---|
+| #13 | `docker` | image `maven` : `3.9-eclipse-temurin-17` → `3.9-eclipse-temurin-26` |
+| #15 | `docker-compose` | `mysql` : `8.0` → `8.3` |
+| #20 | `github-actions` | groupe de 5 mises à jour d'actions |
+| #14 | `maven` | `jakarta.annotation-api` : 2.1.1 → 3.0.0 |
+| #16 | `maven` | `hibernate-core` : 7.4.13.Final → 7.4.14.Final |
+| #17 | `maven` | `mysql-connector-j` : 26.7.0 → 26.10.0 |
+| #18 | `maven` | `jakarta.json-api` : 2.1.0 → 2.1.3 |
+| #19 | `maven` | `gson` : 2.14.0 → 2.15.0 |
+
+![Pull Requests ouvertes par Dependabot](screenshots/ws5-12-dependabot-prs.png)
+
+**Traitement d'une PR.** Les vérifications automatiques s'exécutent sur chaque PR Dependabot (build et Dependency-Check, Semgrep, ZAP, Trivy). Une PR verte n'est toutefois pas automatiquement sûre : le workflow Trivy ne scanne pas l'image `mysql`, donc la PR #15 passe sans que l'image proposée soit analysée. Les mises à jour majeures (changement de version de JDK, de base de données ou d'API Jakarta) sont donc testées localement (`docker compose up -d --build`) avant fusion, et les mises à jour mineures sont fusionnées une par une.
+
+### 9. Limites et points d'attention
+
+- **Failles sans correctif.** `ignore-unfixed: true` évite de bloquer sur ce qu'on ne peut pas corriger. Les 65 failles LOW/MEDIUM de l'image applicative (statut `affected`) restent donc hors gate : elles doivent être surveillées, pas ignorées.
+- **L'image `mysql:8.0` n'est pas couverte par la gate.** Le workflow construit et scanne l'image de l'application uniquement. Les 114 failles HIGH/CRITICAL de la base de données ne le font donc pas échouer. Pistes : passer à une branche MySQL à jour et maintenue, scanner aussi cette image dans le pipeline, et évaluer l'exploitabilité réelle (seul le port 8080 est publié sur l'hôte).
+- **Trivy ne lit pas `docker-compose.yml`.** `trivy config .` n'a détecté qu'un seul fichier de configuration (le Dockerfile). La revue du compose reste manuelle : par exemple, `MYSQL_ALLOW_EMPTY_PASSWORD: "yes"` n'est signalé par aucun scan.
+- **Détection de secrets.** Elle repose sur des motifs connus : un mot de passe sans format reconnaissable peut passer inaperçu.
+- **Un scan est une photo.** De nouvelles CVE sont publiées chaque semaine : c'est pourquoi le workflow se relance aussi chaque lundi.
+- **Ne pas contourner la gate sans justification.** Toute exception dans un fichier `.trivyignore` doit mentionner la CVE, la raison et une date de revue.
+
+### 10. Reproduire en local
+
+```powershell
+docker compose build
+trivy config .
+trivy image --severity HIGH,CRITICAL workshops-groupe2-app
+trivy image --scanners secret workshops-groupe2-app
+trivy image --severity HIGH,CRITICAL mysql:8.0
+```
+
+### 11. Fichiers ajoutés ou modifiés
+
+```
+.
+├── Dockerfile                    (modifié : JRE, non-root, HEALTHCHECK)
+├── .dockerignore                 (complété)
+├── .github/
+│   ├── dependabot.yml            (docker, docker-compose, github-actions)
+│   └── workflows/
+│       └── trivy.yml             (nouveau)
+├── reports/trivy/                (avant.* et apres.*)
+└── screenshots/                  (captures ws5-*)
+```
