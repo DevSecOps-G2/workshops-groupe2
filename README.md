@@ -22,17 +22,18 @@ Le principe suivi est le *Shift Left* : détecter les problèmes de sécurité l
 | 2 | Sécurité du code source | SAST | SonarQube, Semgrep | Le code source |
 | 3 | Sécurité des dépendances | SCA | Dependabot, OWASP Dependency-Check | Les bibliothèques tierces |
 | 4 | Détection automatique des vulnérabilités web | DAST | OWASP ZAP | L'application en exécution |
+| 5 | Sécurisation des conteneurs | Container scanning | Trivy | L'image Docker |
+| 6 | Monitoring, Logging et Réponse aux Incidents | SIEM | Wazuh | Le système en fonctionnement (continu) |
 
-*Ce tableau et le sommaire sont complétés au fur et à mesure des workshops suivants.*
-
-Les approches des workshops 2 à 4 sont complémentaires : le SAST analyse ce que nous écrivons, le SCA analyse ce que nous importons, et le DAST teste ce que nous déployons.
+Les approches des workshops 2 à 6 sont complémentaires : le SAST analyse ce que nous écrivons, le SCA analyse ce que nous importons, le DAST teste ce que nous déployons, le scan de conteneur analyse l'image que nous construisons, et le SIEM surveille le système une fois en production.
 
 ## Sommaire
 
 - [Workshop 2 : Analyse de la qualité et de la sécurité du code (SAST)](#workshop2)
 - [Workshop 3 : Sécurité des dépendances (SCA)](#workshop3)
 - [Workshop 4 : Détection automatique des vulnérabilités web (DAST)](#workshop4)
-<!-- Ajouter ici les prochains workshops -->
+- [Workshop 5 : Sécurisation des conteneurs avec Trivy](#workshop5)
+- [Workshop 6 : Monitoring, Logging et Réponse aux Incidents](#workshop6)
 
 ---
 
@@ -842,7 +843,8 @@ Ce workshop a permis de mettre en œuvre OWASP ZAP sur LiveChat, d'abord en scan
 - `.semgrepignore` : exclusion des rapports HTML de ZAP, générés automatiquement, de l'analyse Semgrep
 
 ---
-<a id="workshop4"></a>
+
+<a id="workshop5"></a>
 
 ## Workshop 5 : Sécurisation des conteneurs avec Trivy
 
@@ -1092,3 +1094,205 @@ trivy image --severity HIGH,CRITICAL mysql:8.0
 ├── reports/trivy/                (avant.* et apres.*)
 └── screenshots/                  (captures ws5-*)
 ```
+
+---
+
+<a id="workshop6"></a>
+
+## Workshop 6 : Monitoring, Logging et Réponse aux Incidents
+
+**Wazuh**
+
+### 1. Objectif
+
+Les workshops 2 à 5 analysent le projet LiveChat *avant* son exécution ou à un instant donné (code, dépendances, application en marche, image conteneur). Ce workshop ajoute une couche complémentaire : la **supervision en continu** d'un système en fonctionnement, avec Wazuh, un SIEM (Security Information and Event Management) open source.
+
+Les objectifs sont :
+- Déployer Wazuh (agent, manager, indexer, dashboard) avec Docker.
+- Ajouter un agent et observer ses événements dans le dashboard.
+- Mettre en œuvre deux cas d'usage : la détection de modification de fichiers (FIM) et la détection de vulnérabilités sur un système complet (Vulnerability Detection).
+- Comparer cette approche à celle des workshops précédents.
+
+### 2. Rappel théorique
+
+- **SIEM** : outil qui centralise les journaux (logs) de plusieurs machines, les compare à des règles de corrélation, et transforme un volume de logs ingérable par un humain en un nombre restreint d'alertes.
+- **Wazuh** est composé de quatre briques :
+
+```
+Agent Wazuh (sur la machine surveillée)
+        ↓ envoie les logs
+Wazuh Manager (analyse avec des règles)
+        ↓ indexe
+Wazuh Indexer (stocke, basé sur OpenSearch)
+        ↓ affiche
+Wazuh Dashboard (interface web, graphiques, alertes)
+```
+
+- **Règles en cascade** : une règle « enfant » peut ne se déclencher que si sa règle « parente » s'est répétée plusieurs fois dans une fenêtre de temps (exemple classique : 8 échecs de connexion SSH en 120 secondes déclenchent une alerte de force brute, alors qu'un échec isolé ne déclenche qu'une alerte mineure).
+- **Différence avec les workshops précédents** :
+
+| Workshop | Outil | Ce qui est analysé | Quand |
+|---|---|---|---|
+| 2 | Semgrep, SonarQube | Le code source | Avant l'exécution |
+| 3 | Dependabot, Dependency-Check | Les dépendances | Avant l'exécution |
+| 4 | OWASP ZAP | L'application en marche | Ponctuel, à la demande |
+| 5 | Trivy | L'image du conteneur | Avant le déploiement |
+| **6** | **Wazuh** | **Le système en fonctionnement** | **En continu** |
+
+### 3. Environnement
+
+- Docker Desktop (backend WSL2) : version 29.9.2, Docker Compose v5.6.1
+- Dépôt de déploiement : [`wazuh/wazuh-docker`](https://github.com/wazuh/wazuh-docker), tag `v4.14.6` (stack single-node : 1 indexer, 1 manager, 1 dashboard)
+- Agent testé : Windows 11 Pro (poste de travail), agent Wazuh `4.14.6` (package MSI)
+- Prérequis système : `vm.max_map_count=262144` (réglé dans WSL2), nécessaire au bon fonctionnement de l'indexeur (basé sur OpenSearch)
+
+> Le dépôt `wazuh-docker` est l'outil officiel de déploiement de Wazuh ; il est cloné séparément du dépôt du projet et ne fait pas partie de `workshops-groupe2`. Seuls les résultats (captures, configuration de test, exports) sont rapportés ici.
+
+![Certificats générés](screenshots/ws6-01-certs-generes.png)
+
+*Figure 1 : Certificats TLS auto-signés générés pour l'indexer, le manager et le dashboard.*
+
+![Conteneurs Wazuh](screenshots/ws6-02-docker-compose-ps.png)
+
+*Figure 2 : Les trois conteneurs de la stack single-node (indexer, manager, dashboard) à l'état `Up`.*
+
+### 4. État initial du dashboard
+
+Avant l'ajout de tout agent, le dashboard affiche : aucun agent enregistré, et des alertes de niveau Medium/Low générées par le manager lui-même (logs internes de Wazuh, pas d'un agent surveillé).
+
+![Dashboard avant agent](screenshots/ws6-03-dashboard-vide.png)
+
+*Figure 3 : Vue d'ensemble (Overview) avant l'ajout d'un agent.*
+
+### 5. Déploiement d'un agent
+
+Un agent Wazuh a été installé sur un poste Windows 11, configuré pour communiquer avec le manager sur `127.0.0.1` (le manager publie ses ports sur l'hôte Docker, accessible en local).
+
+```powershell
+Invoke-WebRequest -Uri https://packages.wazuh.com/4.x/windows/wazuh-agent-4.14.6-1.msi -OutFile $env:tmp\wazuh-agent
+msiexec.exe /i $env:tmp\wazuh-agent /q WAZUH_MANAGER='127.0.0.1' WAZUH_AGENT_NAME='windows-agent-test'
+NET START Wazuh
+```
+
+L'agent apparaît immédiatement comme actif dans le dashboard (ID `001`, Windows 11 Pro, version `v4.14.6`).
+
+![Agent connecté](screenshots/ws6-04-agent-connecte.png)
+
+*Figure 4 : L'agent `windows-agent-test` connecté et actif.*
+
+![Overview avec 1 agent](screenshots/ws6-05-overview-1-agent.png)
+
+*Figure 5 : Vue d'ensemble après connexion de l'agent : 1 agent actif, 0 alerte critique ou haute sur les dernières 24h.*
+
+### 6. Cas d'usage 1 : File Integrity Monitoring (FIM)
+
+Le module FIM (`syscheck`) surveille des répertoires définis dans `ossec.conf` et peut déclencher des alertes en temps réel (`realtime="yes"`) dès qu'un fichier est ajouté, modifié ou supprimé.
+
+Le répertoire suivant a été ajouté à la configuration de l'agent pour un test en temps réel, sans attendre le cycle de scan planifié (12h par défaut) :
+
+```xml
+<!-- Dossier ajoute pour le test FIM du workshop 6 (surveillance temps reel) -->
+<directories realtime="yes">C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup</directories>
+```
+
+> Fichier complet : [`reports/wazuh/fim-config-syscheck.xml`](reports/wazuh/fim-config-syscheck.xml)
+
+Après redémarrage du service de l'agent, la création d'un fichier de test a déclenché une alerte en quelques secondes :
+
+```powershell
+NET STOP Wazuh
+NET START Wazuh
+New-Item -Path "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Startup\test-fim.txt" -ItemType File
+```
+
+| Timestamp | Agent | Chemin | Événement | Règle | Niveau |
+|---|---|---|---|---|---|
+| 22/11/2026 08:50:57 | `windows-agent-test` | `...\Startup\test-fim.txt` | `added` | 554 — *File added to the system* | 5 |
+
+![Alerte FIM](screenshots/ws6-07-fim-file-added.png)
+
+*Figure 6 : Alerte FIM déclenchée en temps réel après la création du fichier de test.*
+
+> Export complet de l'événement : [`reports/wazuh/fim-events-export.csv`](reports/wazuh/fim-events-export.csv)
+
+La règle 554 est une règle de gravité modérée (niveau 5) : elle signale tout ajout de fichier, sans jugement de dangerosité. C'est une brique de base sur laquelle des règles plus spécifiques peuvent s'appuyer (par exemple, une alerte renforcée si le fichier ajouté se trouve dans un répertoire de démarrage automatique du système, ce qui est précisément le cas testé ici).
+
+### 7. Cas d'usage 2 : Vulnerability Detection
+
+Le module Vulnerability Detection compare les logiciels installés sur l'agent à des bases de CVE connues, de la même manière que OWASP Dependency-Check (workshop 3) le fait pour les dépendances Maven, mais appliqué ici à l'ensemble des logiciels installés sur le système d'exploitation.
+
+| Sévérité | Nombre |
+|---|---|
+| Critical | 0 |
+| High | 7 |
+| Medium | 3 |
+| Low | 0 |
+| **Total** | **10** |
+
+| Logiciel | Version | CVE | Sévérité |
+|---|---|---|---|
+| Photos | 26.204.1019.0007 | CVE-2022-30168 | High |
+| Steam | 2.10.91.91 | CVE-2020-15530 | High |
+| Steam | 2.10.91.91 | CVE-2019-17180 | High |
+| Steam | 2.10.91.91 | CVE-2019-15315 | High |
+| Steam | 2.10.91.91 | CVE-2015-4016 | Medium |
+| Steam | 2.10.91.91 | CVE-2021-30481 | High |
+| Steam | 2.10.91.91 | CVE-2015-7985 | High |
+| Steam | 2.10.91.91 | CVE-2019-14743 | Medium |
+| Steam | 2.10.91.91 | CVE-2019-15316 | High |
+| WhatsApp | 2.2645.101.0 | CVE-2026-23863 | Medium |
+
+![Résumé Vulnerability Detection](screenshots/ws6-06-vulnerability-detection.png)
+
+*Figure 7 : Résumé des vulnérabilités détectées sur l'agent Windows (dashboard).*
+
+![Détail Inventory](screenshots/ws6-08-inventory-cves-detail.png)
+
+*Figure 8 : Détail des 10 CVE détectées, par paquet et par gravité (onglet Inventory).*
+
+> Export complet : [`reports/wazuh/vulnerability-detection-export.csv`](reports/wazuh/vulnerability-detection-export.csv)
+
+La majorité des failles concerne Steam (8 CVE), un logiciel tiers installé sur le poste et sans lien avec le projet LiveChat. Elles illustrent toutefois bien le principe : Wazuh évalue **l'ensemble du système d'exploitation hôte**, contrairement à Dependency-Check qui n'évalue que les dépendances déclarées dans `pom.xml`.
+
+### 8. Discussion
+
+**Ce qui distingue Wazuh des outils précédents**
+- Les workshops 2 à 5 détectent des problèmes **potentiels** avant ou lors du déploiement. Wazuh surveille le système **en continu**, une fois en production : il ne remplace pas les outils précédents, il couvre une étape différente du cycle de vie.
+- Contrairement à Semgrep, Dependency-Check, ZAP ou Trivy, Wazuh n'est pas conçu comme une étape ponctuelle de pipeline CI/CD : c'est une infrastructure qui tourne en permanence sur un ou plusieurs hôtes, ce qui explique que son intégration dans ce dépôt se limite à une documentation (README, configuration, exports) plutôt qu'à un workflow GitHub Actions.
+
+**Limites rencontrées**
+- Le test a été réalisé sur un poste de travail Windows, et non sur l'infrastructure de déploiement de LiveChat elle-même (serveur applicatif ou conteneur). En production, un agent Wazuh serait installé directement sur l'hôte exécutant LiveChat (ou dans le conteneur Tomcat), afin de surveiller ses propres journaux et fichiers sensibles.
+- Une alerte Wazuh (comme toute alerte d'outil de sécurité automatisé) n'est pas une preuve d'attaque en elle-même : la règle 554 (FIM) se déclenche pour tout ajout de fichier, légitime ou non. Le contexte (quel fichier, quel compte, quel moment) reste nécessaire pour qualifier une alerte.
+- Les vulnérabilités détectées par le module Vulnerability Detection concernent ici des logiciels tiers du poste de test (Steam, Photos, WhatsApp), non liés au code de LiveChat : elles illustrent la mécanique de l'outil plutôt qu'un risque réel sur l'application.
+- `vm.max_map_count` doit être réglé manuellement à chaque redémarrage de WSL2 ou de la machine hôte, car ce réglage ne persiste pas automatiquement.
+
+**Complémentarité avec les workshops précédents**
+
+| Couche | Outil | Apport spécifique |
+|---|---|---|
+| Code source | Semgrep, SonarQube (W2) | Défauts dans le code avant l'exécution |
+| Dépendances | Dependabot, Dependency-Check (W3) | Composants tiers vulnérables (y compris transitifs) |
+| Application en marche | OWASP ZAP (W4) | Failles exploitables une fois déployée |
+| Image conteneur | Trivy (W5) | Vulnérabilités et mauvaise configuration de l'image |
+| **Système en production** | **Wazuh (W6)** | **Détection d'incidents et de vulnérabilités en continu, après déploiement** |
+
+### 9. Conclusion
+
+Ce workshop a permis de déployer Wazuh en local (stack single-node via Docker) et de connecter un agent de test. Deux cas d'usage ont été mis en œuvre : la détection en temps réel d'une modification de fichier (File Integrity Monitoring) et la détection de 10 CVE sur les logiciels installés (Vulnerability Detection), avec export des résultats bruts pour traçabilité. Contrairement aux workshops précédents, intégrés dans le pipeline CI/CD du projet, Wazuh est un outil de supervision continue qui s'opère en dehors du cycle de build : son apport est documenté ici plutôt qu'automatisé dans une Pull Request. Il complète la chaîne DevSecOps du projet en couvrant la dernière étape du cycle de vie : la détection d'incidents sur un système déjà en production.
+
+### 10. Livrables
+
+```
+reports/wazuh/
+├── fim-config-syscheck.xml              (bloc de configuration FIM ajouté)
+├── fim-events-export.csv                (export de l'alerte FIM)
+└── vulnerability-detection-export.csv   (export des 10 CVE détectées)
+screenshots/
+└── ws6-01 à ws6-08                      (8 captures du déploiement aux résultats)
+```
+
+### 11. Références
+
+- Documentation Wazuh : https://documentation.wazuh.com/
+- Dépôt de déploiement : https://github.com/wazuh/wazuh-docker
+- Règles Wazuh (SSH brute force, FIM) : https://documentation.wazuh.com/current/proof-of-concept-guide/detect-brute-force-attack.html

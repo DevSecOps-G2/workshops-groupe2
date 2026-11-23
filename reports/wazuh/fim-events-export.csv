@@ -1,0 +1,2 @@
+timestamp,agent.name,syscheck.path,syscheck.event,rule.description,rule.level,rule.id
+"Nov 22, 2026 @ 08:50:57.078",windows-agent-test,c:\programdata\microsoft\windows\start menu\programs\startup\test-fim.txt,added,File added to the system.,5,554
